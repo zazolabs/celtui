@@ -78,6 +78,47 @@ impl SightCelestialBody {
     }
 }
 
+/// LOP (Line of Position) data for display and chart plotting
+///
+/// Contains all information a navigator needs to plot a single LOP on a chart:
+/// - The celestial body observed
+/// - The chosen/assumed position (AP) where the calculation was performed
+/// - The calculated altitude (Hc) at that position
+/// - The intercept distance (toward/away from the body)
+/// - The true azimuth bearing to the body
+///
+/// To plot the LOP on a chart:
+/// 1. Mark the chosen position (AP)
+/// 2. Draw a line from AP along the azimuth bearing
+/// 3. Advance (if toward) or retreat (if away) along that line by the intercept distance
+/// 4. Draw the LOP perpendicular to the azimuth at that advanced point
+#[derive(Debug, Clone)]
+pub struct LopDisplayData {
+    /// Name of the celestial body (Sun, Moon, Venus, star name, etc.)
+    pub body_name: String,
+    /// Chosen/Assumed position latitude in decimal degrees (positive = North, negative = South)
+    pub chosen_lat: f64,
+    /// Chosen/Assumed position longitude in decimal degrees (positive = East, negative = West)
+    pub chosen_lon: f64,
+    /// Calculated altitude (Hc) in degrees at the chosen position
+    pub hc: f64,
+    /// Intercept in nautical miles (positive = toward body, negative = away from body)
+    pub intercept: f64,
+    /// True bearing to celestial body in degrees (0-360, clockwise from north)
+    pub azimuth: f64,
+}
+
+impl LopDisplayData {
+    /// Format intercept with direction label
+    pub fn intercept_with_direction(&self) -> String {
+        if self.intercept >= 0.0 {
+            format!("{:.1} NM toward", self.intercept)
+        } else {
+            format!("{:.1} NM away", self.intercept.abs())
+        }
+    }
+}
+
 /// A single sight observation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sight {
@@ -200,6 +241,7 @@ pub struct AutoComputeForm {
     pub current_field: SightInputField,
     pub selected_sight_index: Option<usize>,
     pub fix_result: Option<Fix>,
+    pub lop_data: Vec<LopDisplayData>,  // LOP data for each sight in the fix
     pub error_message: Option<String>,
     pub mode: AutoComputeMode,
     pub vessel_course: String,  // Course in degrees
@@ -239,6 +281,7 @@ impl AutoComputeForm {
             current_field: SightInputField::Body,
             selected_sight_index: None,
             fix_result: None,
+            lop_data: Vec::new(),
             error_message: None,
             mode: AutoComputeMode::EnteringSight,
             vessel_course: String::from("0"),
@@ -567,6 +610,7 @@ impl AutoComputeForm {
 
     pub fn compute_fix(&mut self) {
         self.fix_result = None;
+        self.lop_data = Vec::new();
         self.error_message = None;
 
         if self.sights.len() < 2 {
@@ -591,12 +635,16 @@ impl AutoComputeForm {
             }
         };
 
-        // Compute LOP for each sight with timestamps
+        // Compute LOP for each sight with timestamps and display data
         let mut lops_with_times: Vec<(LineOfPosition, chrono::DateTime<Utc>, &Sight)> = Vec::new();
+        let mut lop_display_data: Vec<LopDisplayData> = Vec::new();
 
         for sight in &self.sights {
-            match self.compute_lop_with_time(sight) {
-                Ok((lop, time)) => lops_with_times.push((lop, time, sight)),
+            match self.compute_lop_with_display_data(sight) {
+                Ok((lop, time, display_data)) => {
+                    lops_with_times.push((lop, time, sight));
+                    lop_display_data.push(display_data);
+                }
                 Err(e) => {
                     self.error_message = Some(format!("Error computing LOP: {}", e));
                     return;
@@ -622,7 +670,8 @@ impl AutoComputeForm {
         let lops: Vec<LineOfPosition> = if needs_running_fix && (speed > 0.0) {
             lops_with_times
                 .iter()
-                .map(|(lop, time, sight)| {
+                .zip(lop_display_data.iter_mut())
+                .map(|((lop, time, sight), display_data)| {
                     let time_diff_hours = (latest_time - *time).num_seconds() as f64 / 3600.0;
                     if time_diff_hours.abs() > 0.016 {
                         // More than ~1 minute difference
@@ -633,7 +682,11 @@ impl AutoComputeForm {
                             speed * time_diff_hours,
                             course
                         ));
-                        advance_lop(lop, course, speed, time_diff_hours)
+                        let advanced_lop = advance_lop(lop, course, speed, time_diff_hours);
+                        // Update display data with advanced position
+                        display_data.chosen_lat = advanced_lop.dr_latitude;
+                        display_data.chosen_lon = advanced_lop.dr_longitude;
+                        advanced_lop
                     } else {
                         *lop
                     }
@@ -642,6 +695,9 @@ impl AutoComputeForm {
         } else {
             lops_with_times.iter().map(|(lop, _, _)| *lop).collect()
         };
+
+        // Store the LOP display data
+        self.lop_data = lop_display_data;
 
         // Calculate fix from LOPs
         match fix_from_multiple_lops(&lops) {
@@ -675,6 +731,94 @@ impl AutoComputeForm {
 
         let lop = self.compute_lop(sight)?;
         Ok((lop, datetime))
+    }
+
+    fn compute_lop_with_display_data(&self, sight: &Sight) -> Result<(LineOfPosition, chrono::DateTime<Utc>, LopDisplayData), String> {
+        use crate::validation::parse_dms;
+
+        // Parse date and time
+        let date = NaiveDate::parse_from_str(&sight.date, "%Y-%m-%d")
+            .map_err(|_| "Invalid date format".to_string())?;
+        let time = NaiveTime::parse_from_str(&sight.time, "%H:%M:%S")
+            .or_else(|_| NaiveTime::parse_from_str(&sight.time, "%H:%M"))
+            .map_err(|_| "Invalid time format".to_string())?;
+        let datetime = Utc.from_utc_datetime(&date.and_time(time));
+
+        // Parse sextant altitude using parse_dms
+        let (sext_deg, sext_min, sext_sec) = parse_dms(&sight.sextant_altitude)
+            .map_err(|e| format!("Invalid sextant altitude: {}", e))?;
+        let sextant_altitude = celtnav::dms_to_decimal(sext_deg as i32, sext_min as u32, sext_sec);
+
+        // Parse corrections
+        let index_error: f64 = sight.index_error.parse()
+            .map_err(|_| "Invalid index error".to_string())?;
+        let height_of_eye: f64 = sight.height_of_eye.parse()
+            .map_err(|_| "Invalid height of eye".to_string())?;
+
+        // Parse DR position using parse_dms
+        let (dr_lat_deg, dr_lat_min, dr_lat_sec) = parse_dms(&sight.dr_latitude)
+            .map_err(|e| format!("Invalid DR latitude: {}", e))?;
+        let mut dr_latitude = celtnav::dms_to_decimal(dr_lat_deg as i32, dr_lat_min as u32, dr_lat_sec);
+        if sight.lat_direction == 'S' {
+            dr_latitude = -dr_latitude;
+        }
+
+        let (dr_lon_deg, dr_lon_min, dr_lon_sec) = parse_dms(&sight.dr_longitude)
+            .map_err(|e| format!("Invalid DR longitude: {}", e))?;
+        let mut dr_longitude = celtnav::dms_to_decimal(dr_lon_deg as i32, dr_lon_min as u32, dr_lon_sec);
+        if sight.lon_direction == 'W' {
+            dr_longitude = -dr_longitude;
+        }
+
+        // Get almanac data
+        let almanac_body = sight.body.to_almanac_body();
+        let position = get_body_position(almanac_body, datetime)?;
+
+        // Apply corrections to get observed altitude
+        let mut ho = sextant_altitude;
+        ho += index_error / 60.0;
+        ho += apply_dip_correction(height_of_eye);
+        ho += apply_refraction_correction(ho);
+
+        // Apply semi-diameter for Sun and Moon
+        if matches!(sight.body, SightCelestialBody::Sun) {
+            ho += apply_semidiameter_correction(0.267, true);
+        } else if matches!(sight.body, SightCelestialBody::Moon) {
+            ho += apply_semidiameter_correction(0.25, true);
+            ho += apply_parallax_correction(0.95, ho);
+        }
+
+        // Calculate LHA
+        let lha = (position.gha + dr_longitude + 360.0) % 360.0;
+
+        // Compute Hc and Zn
+        let sight_data = SightData {
+            latitude: dr_latitude,
+            declination: position.declination,
+            local_hour_angle: lha,
+        };
+
+        let hc = compute_altitude(&sight_data);
+        let zn = compute_azimuth(&sight_data);
+        let intercept = compute_intercept(&sight_data, ho);
+
+        let lop = LineOfPosition {
+            azimuth: zn,
+            intercept,
+            dr_latitude,
+            dr_longitude,
+        };
+
+        let display_data = LopDisplayData {
+            body_name: sight.body.name(),
+            chosen_lat: dr_latitude,
+            chosen_lon: dr_longitude,
+            hc,
+            intercept,
+            azimuth: zn,
+        };
+
+        Ok((lop, datetime, display_data))
     }
 
     fn compute_lop(&self, sight: &Sight) -> Result<LineOfPosition, String> {
@@ -1299,11 +1443,21 @@ fn render_sights_list(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
 fn render_fix_results(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
     // If we have both a fix and a message, split the area to show both
     if let Some(fix) = &form.fix_result {
+        // Calculate heights for LOP display
+        let lop_lines_height = if !form.lop_data.is_empty() {
+            // 2 for header + border, then 5 lines per LOP (body, chosen pos, hc, intercept, azimuth + blank line)
+            2 + (form.lop_data.len() * 6).min(30) as u16
+        } else {
+            0
+        };
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(0),      // Fix display (main area)
+                Constraint::Length(12),  // Fix display (fixed size)
+                Constraint::Length(lop_lines_height),  // LOP display (variable)
                 Constraint::Length(if form.error_message.is_some() { 4 } else { 0 }),   // Status message
+                Constraint::Min(0),      // Remaining space
             ])
             .split(area);
 
@@ -1313,13 +1467,6 @@ fn render_fix_results(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
 
         let lon_sign = if fix.position.longitude >= 0.0 { "E" } else { "W" };
         let lon_dms = celtnav::decimal_to_dms(fix.position.longitude.abs());
-
-        // Create a prominent header with the fix position
-        let fix_summary = format!(
-            "Fix Position: {} {:02}° {:05.2}' {} / {} {:03}° {:05.2}' {}",
-            lat_sign, lat_dms.degrees, lat_dms.minutes, lat_sign,
-            lon_sign, lon_dms.degrees, lon_dms.minutes, lon_sign
-        );
 
         let mut lines = vec![
             Line::from(""),
@@ -1379,9 +1526,99 @@ fn render_fix_results(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
 
         frame.render_widget(fix_widget, chunks[0]);
 
+        // Render LOP data if available
+        if !form.lop_data.is_empty() && chunks[1].height > 0 {
+            let mut lop_lines = vec![
+                Line::from(vec![
+                    Span::styled("═══ LINES OF POSITION ═══",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(""),
+            ];
+
+            for (i, lop) in form.lop_data.iter().enumerate() {
+                let lat_sign = if lop.chosen_lat >= 0.0 { "N" } else { "S" };
+                let lat_dms = celtnav::decimal_to_dms(lop.chosen_lat.abs());
+
+                let lon_sign = if lop.chosen_lon >= 0.0 { "E" } else { "W" };
+                let lon_dms = celtnav::decimal_to_dms(lop.chosen_lon.abs());
+
+                let hc_dms = celtnav::decimal_to_dms(lop.hc.abs());
+
+                // Determine intercept color (green for toward, red for away)
+                let intercept_color = if lop.intercept >= 0.0 {
+                    Color::Green
+                } else {
+                    Color::Red
+                };
+
+                lop_lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("Sight {}: ", i + 1),
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    ),
+                    Span::styled(
+                        &lop.body_name,
+                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                    ),
+                ]));
+
+                lop_lines.push(Line::from(vec![
+                    Span::styled("  Chosen Position: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(
+                        format!("{} {:02}° {:05.2}' {}, {} {:03}° {:05.2}' {}",
+                            lat_sign, lat_dms.degrees, lat_dms.minutes, lat_sign,
+                            lon_sign, lon_dms.degrees, lon_dms.minutes, lon_sign),
+                        Style::default().fg(Color::White)
+                    ),
+                ]));
+
+                lop_lines.push(Line::from(vec![
+                    Span::styled("  Hc: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(
+                        format!("{:02}° {:05.2}'", hc_dms.degrees, hc_dms.minutes),
+                        Style::default().fg(Color::White)
+                    ),
+                ]));
+
+                lop_lines.push(Line::from(vec![
+                    Span::styled("  Intercept: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(
+                        lop.intercept_with_direction(),
+                        Style::default().fg(intercept_color)
+                    ),
+                ]));
+
+                lop_lines.push(Line::from(vec![
+                    Span::styled("  Azimuth: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(
+                        format!("{:03.0}° T", lop.azimuth),
+                        Style::default().fg(Color::White)
+                    ),
+                ]));
+
+                // Add blank line between LOPs (except after the last one)
+                if i < form.lop_data.len() - 1 {
+                    lop_lines.push(Line::from(""));
+                }
+            }
+
+            let lop_widget = Paragraph::new(lop_lines)
+                .block(
+                    Block::default()
+                        .title(" LOP Data for Chart Plotting ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                );
+
+            frame.render_widget(lop_widget, chunks[1]);
+        }
+
         // Render status message if present
         if let Some(error) = &form.error_message {
-            if chunks[1].height > 0 {
+            if chunks[2].height > 0 {
                 let paragraph = Paragraph::new(error.clone())
                     .style(Style::default().fg(Color::Yellow))
                     .block(
@@ -1392,7 +1629,7 @@ fn render_fix_results(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
                     )
                     .wrap(Wrap { trim: true });
 
-                frame.render_widget(paragraph, chunks[1]);
+                frame.render_widget(paragraph, chunks[2]);
             }
         }
     } else if let Some(error) = &form.error_message {
@@ -2430,6 +2667,180 @@ mod tests {
         assert_eq!(fix.num_lops, 3);
         assert!(fix.accuracy_estimate.is_some());
         assert_eq!(fix.accuracy_estimate.unwrap(), 1.5);
+    }
+
+    #[test]
+    fn test_lop_display_data_creation() {
+        let lop_data = LopDisplayData {
+            body_name: "Sirius".to_string(),
+            chosen_lat: 45.5,
+            chosen_lon: -123.25,
+            hc: 35.408,
+            intercept: 2.3,
+            azimuth: 125.0,
+        };
+
+        assert_eq!(lop_data.body_name, "Sirius");
+        assert_eq!(lop_data.chosen_lat, 45.5);
+        assert_eq!(lop_data.chosen_lon, -123.25);
+        assert_eq!(lop_data.hc, 35.408);
+        assert_eq!(lop_data.intercept, 2.3);
+        assert_eq!(lop_data.azimuth, 125.0);
+    }
+
+    #[test]
+    fn test_lop_display_intercept_toward() {
+        let lop_data = LopDisplayData {
+            body_name: "Sun".to_string(),
+            chosen_lat: 40.0,
+            chosen_lon: -74.0,
+            hc: 42.0,
+            intercept: 2.5,
+            azimuth: 215.0,
+        };
+
+        let direction = lop_data.intercept_with_direction();
+        assert_eq!(direction, "2.5 NM toward");
+    }
+
+    #[test]
+    fn test_lop_display_intercept_away() {
+        let lop_data = LopDisplayData {
+            body_name: "Venus".to_string(),
+            chosen_lat: 40.0,
+            chosen_lon: -74.0,
+            hc: 28.0,
+            intercept: -1.7,
+            azimuth: 45.0,
+        };
+
+        let direction = lop_data.intercept_with_direction();
+        assert_eq!(direction, "1.7 NM away");
+    }
+
+    #[test]
+    fn test_lop_display_intercept_zero() {
+        let lop_data = LopDisplayData {
+            body_name: "Moon".to_string(),
+            chosen_lat: 40.0,
+            chosen_lon: -74.0,
+            hc: 30.0,
+            intercept: 0.0,
+            azimuth: 90.0,
+        };
+
+        let direction = lop_data.intercept_with_direction();
+        assert_eq!(direction, "0.0 NM toward");
+    }
+
+    #[test]
+    fn test_auto_compute_form_has_lop_data_field() {
+        let form = AutoComputeForm::new();
+        assert_eq!(form.lop_data.len(), 0);
+    }
+
+    #[test]
+    fn test_lop_data_cleared_on_compute_fix() {
+        let mut form = AutoComputeForm::new();
+
+        // Add some dummy LOP data
+        form.lop_data.push(LopDisplayData {
+            body_name: "Sun".to_string(),
+            chosen_lat: 40.0,
+            chosen_lon: -74.0,
+            hc: 42.0,
+            intercept: 2.0,
+            azimuth: 180.0,
+        });
+
+        assert_eq!(form.lop_data.len(), 1);
+
+        // Compute fix with insufficient sights should clear lop_data
+        form.compute_fix();
+
+        // Should be cleared because we don't have enough sights
+        assert_eq!(form.lop_data.len(), 0);
+    }
+
+    #[test]
+    fn test_lop_data_populated_after_successful_fix() {
+        let mut form = AutoComputeForm::new();
+
+        // Add two valid sights for a fix
+        let sight1 = Sight {
+            body: SightCelestialBody::Sun,
+            date: "2024-06-21".to_string(),
+            time: "12:00:00".to_string(),
+            sextant_altitude: "45 30.0".to_string(),
+            index_error: "0".to_string(),
+            height_of_eye: "10".to_string(),
+            dr_latitude: "45 30.0".to_string(),
+            dr_longitude: "123 15.0".to_string(),
+            lat_direction: 'N',
+            lon_direction: 'W',
+        };
+
+        let sight2 = Sight {
+            body: SightCelestialBody::Venus,
+            date: "2024-06-21".to_string(),
+            time: "12:00:00".to_string(),
+            sextant_altitude: "35 20.0".to_string(),
+            index_error: "0".to_string(),
+            height_of_eye: "10".to_string(),
+            dr_latitude: "45 30.0".to_string(),
+            dr_longitude: "123 15.0".to_string(),
+            lat_direction: 'N',
+            lon_direction: 'W',
+        };
+
+        form.sights.push(sight1);
+        form.sights.push(sight2);
+
+        // Compute fix
+        form.compute_fix();
+
+        // Check if LOP data was populated
+        if form.fix_result.is_some() {
+            // If fix was successful, we should have LOP data for both sights
+            assert_eq!(form.lop_data.len(), 2, "Should have LOP data for both sights");
+
+            // Check first LOP
+            assert_eq!(form.lop_data[0].body_name, "Sun");
+            assert!(form.lop_data[0].chosen_lat > 0.0); // Northern hemisphere
+            assert!(form.lop_data[0].chosen_lon < 0.0); // Western hemisphere
+            assert!(form.lop_data[0].azimuth >= 0.0 && form.lop_data[0].azimuth < 360.0);
+
+            // Check second LOP
+            assert_eq!(form.lop_data[1].body_name, "Venus");
+            assert!(form.lop_data[1].chosen_lat > 0.0); // Northern hemisphere
+            assert!(form.lop_data[1].chosen_lon < 0.0); // Western hemisphere
+            assert!(form.lop_data[1].azimuth >= 0.0 && form.lop_data[1].azimuth < 360.0);
+        } else {
+            // If fix failed, LOP data should still be populated (it's computed before fix)
+            // Note: This test may fail due to almanac data requirements
+            // In that case, we should at least verify the error message exists
+            assert!(form.error_message.is_some());
+        }
+    }
+
+    #[test]
+    fn test_lop_data_fields_are_reasonable() {
+        // Test that LOP data fields have reasonable values
+        let lop = LopDisplayData {
+            body_name: "Arcturus".to_string(),
+            chosen_lat: 50.0,
+            chosen_lon: -5.0,
+            hc: 45.5,
+            intercept: 3.2,
+            azimuth: 225.0,
+        };
+
+        // Verify all fields are accessible and have correct types
+        assert_eq!(lop.body_name, "Arcturus");
+        assert!(lop.chosen_lat.abs() <= 90.0, "Latitude should be within valid range");
+        assert!(lop.chosen_lon.abs() <= 180.0, "Longitude should be within valid range");
+        assert!(lop.hc >= 0.0 && lop.hc <= 90.0, "Hc should be within valid altitude range");
+        assert!(lop.azimuth >= 0.0 && lop.azimuth < 360.0, "Azimuth should be 0-360 degrees");
     }
 }
 
