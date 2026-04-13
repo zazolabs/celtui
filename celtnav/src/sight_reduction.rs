@@ -102,9 +102,35 @@ pub fn compute_azimuth(sight_data: &SightData) -> f64 {
         hour_angle: sight_data.local_hour_angle,
     };
 
-    // Convert to horizontal coordinates and return azimuth
+    // Convert to horizontal coordinates - this gives azimuth angle Z
     let hz_coords = equatorial_to_horizontal(&eq_coords, sight_data.latitude);
-    hz_coords.azimuth
+    let z = hz_coords.azimuth;
+
+    // Convert Z (azimuth angle) to Zn (true azimuth)
+    // The spherical trigonometry formula computes Z (azimuth angle).
+    // For navigation, we need Zn (true azimuth measured clockwise from North).
+    //
+    // Correction depends on hemisphere and LHA:
+    // For Northern Hemisphere (positive latitude):
+    //   If LHA < 180° (body west of meridian): Zn = 360° - Z
+    //   If LHA >= 180° (body east of meridian): Zn = 360° - Z
+    // Actually, empirically: Always use Zn = 360° - Z in Northern Hemisphere!
+    //
+    // For Southern Hemisphere: needs verification (using opposite rule for now)
+
+    // The atan2 formula produces the counter-clockwise angle from North because
+    // it uses +sin(LHA). Applying 360 - z converts to clockwise (true azimuth).
+    // This is correct for both hemispheres.
+    let zn = 360.0 - z;
+
+    // Normalize to [0, 360) range
+    if zn >= 360.0 {
+        zn - 360.0
+    } else if zn < 0.0 {
+        zn + 360.0
+    } else {
+        zn
+    }
 }
 
 /// Computes the intercept
@@ -311,7 +337,7 @@ fn normalize_degrees(degrees: f64) -> f64 {
 ///
 /// **IMPORTANT FOR STARS**: Pass the GHA of the star (not GHA Aries separately).
 /// GHA_star = GHA_Aries + SHA_star. This function will optimize to make LHA of the star whole,
-/// which is correct for both Pub 249 Vol 1 and manual sight reduction.
+/// which is correct for both SRT (Sight Reduction Tables) and manual sight reduction.
 ///
 /// # Arguments
 /// * `dr_lat` - Dead reckoning latitude in decimal degrees (North positive, South negative)
@@ -433,7 +459,7 @@ pub fn optimize_chosen_position_celestial_body(dr_lat: f64, dr_lon: f64, gha: f6
 /// **DEPRECATED**: This function was based on a misunderstanding. DO NOT USE!
 ///
 /// **THE PROBLEM**: This function optimizes to make LHA Aries whole, which is INCORRECT
-/// for actual celestial navigation calculations. While Pub 249 Vol 1 tables are organized
+/// for actual celestial navigation calculations. While SRT (Sight Reduction Tables) are organized
 /// by LHA Aries, the actual sight reduction calculation uses LHA of the star itself.
 ///
 /// **CORRECT APPROACH**: Use `optimize_chosen_position()` with GHA of the star:
@@ -734,13 +760,13 @@ mod tests {
     }
 
     #[test]
-    fn test_pollux_scenario_east() {
-        // Pollux scenario where body is in the east (morning observation)
-        // This should give Az ~ 104° (east-southeast)
+    fn test_pollux_scenario_lha_52() {
+        // Pollux scenario with LHA = 52°
+        // This gives Hc ≈ 46° and Zn ≈ 266° (west)
         let sight = SightData {
             latitude: 45.0,
             declination: 28.0,  // Pollux declination
-            local_hour_angle: 52.0,  // Approximate LHA for Hc ≈ 46°, Az ≈ 104°
+            local_hour_angle: 52.0,
         };
 
         let hc = compute_altitude(&sight);
@@ -753,22 +779,22 @@ mod tests {
             hc
         );
 
-        // Should be east-southeast (around 95-110°)
+        // Should be west (around 260-270°)
         assert!(
-            zn > 90.0 && zn < 120.0,
-            "Azimuth should be east-southeast (~104°), got {:.0}°",
+            zn > 260.0 && zn < 270.0,
+            "Azimuth should be west (~266°), got {:.0}°",
             zn
         );
     }
 
     #[test]
-    fn test_pollux_scenario_west() {
-        // Pollux scenario where body is in the west (evening observation)
-        // This gives Az ~ 265° (west-southwest)
+    fn test_pollux_scenario_lha_308() {
+        // Pollux scenario with LHA = 308°
+        // This gives Hc ≈ 46° and Zn ≈ 94° (east)
         let sight = SightData {
             latitude: 45.0,
             declination: 28.0,  // Pollux declination
-            local_hour_angle: 308.0,  // Approximate LHA for Hc ≈ 46°, Az ≈ 265°
+            local_hour_angle: 308.0,
         };
 
         let hc = compute_altitude(&sight);
@@ -781,10 +807,10 @@ mod tests {
             hc
         );
 
-        // Should be west-southwest (around 255-275°)
+        // Should be east (around 90-100°)
         assert!(
-            zn > 250.0 && zn < 280.0,
-            "Azimuth should be west-southwest (~265°), got {:.0}°",
+            zn > 85.0 && zn < 100.0,
+            "Azimuth should be east (~94°), got {:.0}°",
             zn
         );
     }

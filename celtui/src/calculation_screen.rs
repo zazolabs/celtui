@@ -792,36 +792,36 @@ fn render_results(frame: &mut Frame, area: Rect, form: &CalculationForm) {
             Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED),
         )));
 
-        // Show corrections
+        // Show corrections (all values in arcminutes)
         lines.push(Line::from(format!(
-            "  Index Error: {:+.2}°",
-            results.corrections.index_error
+            "  Index Error: {:+.1}'",
+            results.corrections.index_error * 60.0
         )));
         lines.push(Line::from(format!(
-            "  Dip: {:+.2}°",
-            results.corrections.dip
+            "  Dip: {:+.1}'",
+            results.corrections.dip * 60.0
         )));
         lines.push(Line::from(format!(
-            "  Refraction: {:+.2}°",
-            results.corrections.refraction
+            "  Refraction: {:+.1}'",
+            results.corrections.refraction * 60.0
         )));
         if results.corrections.semidiameter != 0.0 {
             lines.push(Line::from(format!(
-                "  Semi-diameter: {:+.2}°",
-                results.corrections.semidiameter
+                "  Semi-diameter: {:+.1}'",
+                results.corrections.semidiameter * 60.0
             )));
         }
         if results.corrections.parallax != 0.0 {
             lines.push(Line::from(format!(
-                "  Parallax: {:+.2}°",
-                results.corrections.parallax
+                "  Parallax: {:+.1}'",
+                results.corrections.parallax * 60.0
             )));
         }
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled("  Total Correction: ", Style::default().fg(Color::White)),
             Span::styled(
-                format!("{:+.2}°", results.corrections.total),
+                format!("{:+.1}'", results.corrections.total * 60.0),
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
             ),
         ]));
@@ -1677,8 +1677,8 @@ mod tests {
         let mut form = CalculationForm::new();
         form.star_name = String::new();
         let matches = form.filter_stars();
-        // Should return all 58 stars when input is empty
-        assert_eq!(matches.len(), 58);
+        // Should return all 63 stars when input is empty
+        assert_eq!(matches.len(), 63);
     }
 
     #[test]

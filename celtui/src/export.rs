@@ -79,22 +79,55 @@ pub fn format_sight_log(sights: &[Sight], lop_data: &[LopDisplayData], fix: Opti
             let chosen_lon_deg = chosen_lon_abs.floor() as i32;
             let chosen_lon_min = (chosen_lon_abs - chosen_lon_deg as f64) * 60.0;
 
-            writeln!(&mut output, "  Chosen Position:").unwrap();
+            writeln!(&mut output, "  CP (used for trig calculation):").unwrap();
             writeln!(&mut output, "    Latitude:  {} {:02}° {:06.3}'", chosen_lat_sign, chosen_lat_deg, chosen_lat_min).unwrap();
-            writeln!(&mut output, "    Longitude: {} {:03}° {:06.3}'", chosen_lon_sign, chosen_lon_deg, chosen_lon_min).unwrap();
+            writeln!(&mut output, "    Longitude: {} {:03}° {:04.1}'", chosen_lon_sign, chosen_lon_deg, chosen_lon_min).unwrap();
 
-            // Hc
+            // Ho and Hc
+            let ho_dms = celtnav::decimal_to_dms(lop.ho.abs());
+            writeln!(&mut output, "  Ho:         {:02}° {:06.3}'", ho_dms.degrees, ho_dms.minutes).unwrap();
+
             let hc_abs = lop.hc.abs();
             let hc_deg = hc_abs.floor() as i32;
             let hc_min = (hc_abs - hc_deg as f64) * 60.0;
             writeln!(&mut output, "  Hc:         {:02}° {:06.3}'", hc_deg, hc_min).unwrap();
 
-            // Intercept
+            // Declination
+            let dec_sign = if lop.declination >= 0.0 { "N" } else { "S" };
+            let dec_dms = celtnav::decimal_to_dms(lop.declination.abs());
+            writeln!(&mut output, "  Dec:        {} {:02}° {:06.3}'", dec_sign, dec_dms.degrees, dec_dms.minutes).unwrap();
+
+            // GHA, LHA
+            let gha_dms = celtnav::decimal_to_dms(lop.gha.abs());
+            let lha_dms = celtnav::decimal_to_dms(lop.lha.abs());
+            writeln!(&mut output, "  GHA:        {:03}° {:06.3}'", gha_dms.degrees, gha_dms.minutes).unwrap();
+            writeln!(&mut output, "  LHA:        {:03}° {:06.3}'", lha_dms.degrees, lha_dms.minutes).unwrap();
+
+            // Intercept and Azimuth
             let intercept_direction = if lop.intercept >= 0.0 { "toward" } else { "away" };
             writeln!(&mut output, "  Intercept:  {:.1} NM {}", lop.intercept.abs(), intercept_direction).unwrap();
+            writeln!(&mut output, "  Z:          {:03.1}°", lop.azimuth).unwrap();
 
-            // Azimuth
-            writeln!(&mut output, "  Azimuth:    {:03.1}°", lop.azimuth).unwrap();
+            // For stars, show SRT data
+            if let (Some(gha_aries), Some(pub249_lat), Some(pub249_lon), Some(lha_aries)) =
+                (lop.gha_aries, lop.pub249_chosen_lat, lop.pub249_chosen_lon, lop.lha_aries)
+            {
+                writeln!(&mut output).unwrap();
+                writeln!(&mut output, "  SRT Data (Sight Reduction Tables):").unwrap();
+
+                let gha_aries_dms = celtnav::decimal_to_dms(gha_aries.abs());
+                writeln!(&mut output, "    GHA Aries:  {:03}° {:06.3}'", gha_aries_dms.degrees, gha_aries_dms.minutes).unwrap();
+
+                let pub249_lat_sign = if pub249_lat >= 0.0 { "N" } else { "S" };
+                let pub249_lat_dms = celtnav::decimal_to_dms(pub249_lat.abs());
+                let pub249_lon_sign = if pub249_lon >= 0.0 { "E" } else { "W" };
+                let pub249_lon_dms = celtnav::decimal_to_dms(pub249_lon.abs());
+
+                writeln!(&mut output, "    Optimized CP:").unwrap();
+                writeln!(&mut output, "      Latitude:  {} {:02}° {:06.3}'", pub249_lat_sign, pub249_lat_dms.degrees, pub249_lat_dms.minutes).unwrap();
+                writeln!(&mut output, "      Longitude: {} {:03}° {:04.1}'", pub249_lon_sign, pub249_lon_dms.degrees, pub249_lon_dms.minutes).unwrap();
+                writeln!(&mut output, "    LHA Aries:  {:03}° (whole number for table)", lha_aries as i32).unwrap();
+            }
             writeln!(&mut output).unwrap();
         }
     }
@@ -326,6 +359,7 @@ mod tests {
                 chosen_lat: 40.0,
                 chosen_lon: -70.0,
                 ho: 48.0,
+                declination: 15.5,
                 gha: 245.5,
                 lha: 175.5,
                 gha_aries: None,
@@ -343,14 +377,11 @@ mod tests {
         // Verify LOP section exists
         assert!(log.contains("LINES OF POSITION"));
         assert!(log.contains("LOP #1: Sun"));
-        assert!(log.contains("Chosen Position:"));
+        assert!(log.contains("CP"));
         assert!(log.contains("Hc:"));
         assert!(log.contains("Intercept:"));
-        assert!(log.contains("Azimuth:"));
+        assert!(log.contains("Z:"));
         assert!(log.contains("toward")); // Positive intercept
-
-        // Verify DR position is shown
-        assert!(log.contains("DR Position:"));
 
         // Verify fix position is shown separately
         assert!(log.contains("Fix Position:"));
@@ -368,6 +399,7 @@ mod tests {
                 chosen_lat: 35.0,
                 chosen_lon: 120.0,
                 ho: 56.4,
+                declination: -12.3,
                 gha: 150.0,
                 lha: 270.0,
                 gha_aries: None,

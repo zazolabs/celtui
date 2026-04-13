@@ -88,15 +88,18 @@ pub fn fix_from_two_lops(lop1: &LineOfPosition, lop2: &LineOfPosition) -> Option
     let lop1_bearing_rad = lop1_bearing.to_radians();
     let lop2_bearing_rad = lop2_bearing.to_radians();
 
-    // Direction vectors (in lat/lon space, approximation valid for small areas)
-    let d1_lat = lop1_bearing_rad.cos();
-    let d1_lon = lop1_bearing_rad.sin();
-    let d2_lat = lop2_bearing_rad.cos();
-    let d2_lon = lop2_bearing_rad.sin();
+    // Direction vectors in degrees per nautical mile
+    // At any latitude, 1° latitude = 60 NM, 1° longitude ≈ 60 × cos(latitude) NM
+    let cos_lat = dr_lat.to_radians().cos();
+    let d1_lat = lop1_bearing_rad.cos() / 60.0;              // degrees of lat per NM
+    let d1_lon = lop1_bearing_rad.sin() / (60.0 * cos_lat);  // degrees of lon per NM
+    let d2_lat = lop2_bearing_rad.cos() / 60.0;              // degrees of lat per NM
+    let d2_lon = lop2_bearing_rad.sin() / (60.0 * cos_lat);  // degrees of lon per NM
 
     // Solve for intersection using parametric equations
     // (lop1_point.lat + t * d1_lat) = (lop2_point.lat + s * d2_lat)
     // (lop1_point.lon + t * d1_lon) = (lop2_point.lon + s * d2_lon)
+    // where t and s are in nautical miles
 
     let det = d1_lat * d2_lon - d1_lon * d2_lat;
 
@@ -108,11 +111,11 @@ pub fn fix_from_two_lops(lop1: &LineOfPosition, lop2: &LineOfPosition) -> Option
     let delta_lat = lop2_point.latitude - lop1_point.latitude;
     let delta_lon = lop2_point.longitude - lop1_point.longitude;
 
-    let t = (delta_lat * d2_lon - delta_lon * d2_lat) / det;
+    let t = (delta_lat * d2_lon - delta_lon * d2_lat) / det;  // t in NM
 
     // Calculate intersection point
-    let fix_lat = lop1_point.latitude + t * d1_lat / 60.0; // Convert NM to degrees
-    let fix_lon = lop1_point.longitude + t * d1_lon / (60.0 * dr_lat.to_radians().cos());
+    let fix_lat = lop1_point.latitude + t * d1_lat;
+    let fix_lon = lop1_point.longitude + t * d1_lon;
 
     Some(Fix {
         position: Position {
@@ -165,6 +168,9 @@ pub fn fix_from_multiple_lops(lops: &[LineOfPosition]) -> Option<Fix> {
         let mut sum_d = 0.0;
         let mut sum_e = 0.0;
 
+        // Account for latitude scaling in all calculations
+        let cos_lat = current_lat.to_radians().cos();
+
         for lop in lops {
             // Point on this LOP from DR
             let lop_point = move_position(lop.dr_latitude, lop.dr_longitude, lop.azimuth, lop.intercept);
@@ -172,13 +178,13 @@ pub fn fix_from_multiple_lops(lops: &[LineOfPosition]) -> Option<Fix> {
             // LOP bearing (perpendicular to azimuth)
             let _lop_bearing = (lop.azimuth + 90.0) % 360.0;
 
-            // Normal to LOP (same as azimuth to body)
-            let n_lat = lop.azimuth.to_radians().cos();
-            let n_lon = lop.azimuth.to_radians().sin();
+            // Unit normal to LOP (same as azimuth to body)
+            let n_lat = lop.azimuth.to_radians().cos();  // dimensionless
+            let n_lon = lop.azimuth.to_radians().sin();  // dimensionless
 
-            // Distance from current position to LOP point
-            let delta_lat = (current_lat - lop_point.latitude) * 60.0; // Convert to NM
-            let delta_lon = (current_lon - lop_point.longitude) * 60.0 * current_lat.to_radians().cos();
+            // Distance from current position to LOP point (convert to NM)
+            let delta_lat = (current_lat - lop_point.latitude) * 60.0;  // NM
+            let delta_lon = (current_lon - lop_point.longitude) * 60.0 * cos_lat;  // NM
 
             // Build normal equations for least squares
             sum_a += n_lat * n_lat;
@@ -196,28 +202,34 @@ pub fn fix_from_multiple_lops(lops: &[LineOfPosition]) -> Option<Fix> {
             return None;
         }
 
-        let delta_lat = -(sum_d * sum_c - sum_e * sum_b) / det;
-        let delta_lon = -(sum_e * sum_a - sum_d * sum_b) / det;
+        let delta_lat = -(sum_d * sum_c - sum_e * sum_b) / det;  // in NM
+        let delta_lon = -(sum_e * sum_a - sum_d * sum_b) / det;  // in NM
 
-        current_lat += delta_lat / 60.0; // Convert from NM to degrees
+        // Update position (convert NM to degrees)
+        current_lat += delta_lat / 60.0;
         current_lon += delta_lon / (60.0 * current_lat.to_radians().cos());
 
-        // Check for convergence
+        // Check for convergence (in NM)
         if delta_lat.abs() < 0.01 && delta_lon.abs() < 0.01 {
             break;
         }
     }
 
     // Calculate accuracy estimate (RMS residual)
+    let cos_lat = current_lat.to_radians().cos();
     let mut sum_sq_residuals = 0.0;
     for lop in lops {
         let lop_point = move_position(lop.dr_latitude, lop.dr_longitude, lop.azimuth, lop.intercept);
-        let delta_lat = (current_lat - lop_point.latitude) * 60.0;
-        let delta_lon = (current_lon - lop_point.longitude) * 60.0 * current_lat.to_radians().cos();
 
-        let n_lat = lop.azimuth.to_radians().cos();
-        let n_lon = lop.azimuth.to_radians().sin();
+        // Distance from final position to LOP point (convert to NM)
+        let delta_lat = (current_lat - lop_point.latitude) * 60.0;  // NM
+        let delta_lon = (current_lon - lop_point.longitude) * 60.0 * cos_lat;  // NM
 
+        // Unit normal to LOP
+        let n_lat = lop.azimuth.to_radians().cos();  // dimensionless
+        let n_lon = lop.azimuth.to_radians().sin();  // dimensionless
+
+        // Calculate residual in NM
         let residual = delta_lat * n_lat + delta_lon * n_lon;
         sum_sq_residuals += residual * residual;
     }

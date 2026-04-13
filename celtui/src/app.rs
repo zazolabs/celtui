@@ -12,6 +12,8 @@ use crate::sight_reduction_screen::SightReductionForm;
 use crate::auto_compute_screen::AutoComputeForm;
 use crate::averaging_screen::AveragingForm;
 use crate::arc_to_time_screen::ArcToTimeForm;
+use crate::twilight_screen::TwilightForm;
+use crate::dr_ep_screen::DrEpForm;
 
 /// Represents the different screens/views in the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +32,10 @@ pub enum Screen {
     Averaging,
     /// Arc to Time calculator screen
     ArcToTime,
+    /// Twilight and visibility screen
+    Twilight,
+    /// Dead Reckoning / Estimated Position screen
+    DrEp,
     /// Help / instructions screen
     Help,
 }
@@ -52,20 +58,49 @@ pub struct App {
     pub averaging_form: AveragingForm,
     /// Arc to Time form state
     pub arc_to_time_form: ArcToTimeForm,
+    /// Twilight form state
+    pub twilight_form: TwilightForm,
+    /// DR/EP form state
+    pub dr_ep_form: DrEpForm,
 }
 
 impl App {
     /// Creates a new application instance
     pub fn new() -> Self {
+        let dr_ep_form = DrEpForm::new();
+        let mut twilight_form = TwilightForm::new();
+        let mut auto_compute_form = AutoComputeForm::new();
+        let mut calculation_form = CalculationForm::new();
+        // Pre-populate DR position from stored DR/EP data
+        let stored = &dr_ep_form.stored;
+        if stored.dr_lat != 0.0 || stored.dr_lon != 0.0 {
+            let (lat_str, lat_dir, lon_str, lon_dir) =
+                crate::dr_ep_screen::DrEpForm::decode_position(stored.dr_lat, stored.dr_lon);
+            twilight_form.latitude = lat_str.clone();
+            twilight_form.lat_direction = lat_dir;
+            twilight_form.longitude = lon_str.clone();
+            twilight_form.lon_direction = lon_dir;
+            auto_compute_form.current_sight.dr_latitude = lat_str.clone();
+            auto_compute_form.current_sight.lat_direction = lat_dir;
+            auto_compute_form.current_sight.dr_longitude = lon_str.clone();
+            auto_compute_form.current_sight.lon_direction = lon_dir;
+            calculation_form.latitude = lat_str;
+            calculation_form.latitude_direction = lat_dir;
+            calculation_form.longitude = lon_str;
+            calculation_form.longitude_direction = lon_dir;
+        }
+
         Self {
             current_screen: Screen::Home,
             should_quit: false,
-            calculation_form: CalculationForm::new(),
+            calculation_form,
             almanac_form: AlmanacForm::new(),
             sight_reduction_form: SightReductionForm::new(),
-            auto_compute_form: AutoComputeForm::new(),
+            auto_compute_form,
             averaging_form: AveragingForm::new(),
             arc_to_time_form: ArcToTimeForm::new(),
+            twilight_form,
+            dr_ep_form,
         }
     }
 
@@ -214,6 +249,61 @@ impl App {
             }
         }
 
+        // If on DR/EP screen, let it handle most keys first
+        if self.current_screen == Screen::DrEp {
+            match key_event.code {
+                // Always allow emergency exits
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    // Fall through to normal navigation
+                }
+                // Allow screen navigation shortcuts
+                KeyCode::Char('h') | KeyCode::Char('H')
+                | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
+                | KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Char('?') | KeyCode::Char('v') | KeyCode::Char('V') => {
+                    // Fall through to normal navigation
+                }
+                // All other keys are handled by the DR/EP form
+                _ => {
+                    self.dr_ep_form.handle_key_event(key_event);
+                    if self.dr_ep_form.dr_updated {
+                        self.propagate_dr_position();
+                    }
+                    return;
+                }
+            }
+        }
+
+        // If on twilight screen, let it handle most keys first
+        if self.current_screen == Screen::Twilight {
+            match key_event.code {
+                // Always allow emergency exits (q/Q and Esc) to navigate away
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    // Fall through to normal navigation
+                }
+                // Handle 'T' specially - in twilight screen it toggles period, not navigation
+                KeyCode::Char('t') | KeyCode::Char('T') => {
+                    self.twilight_form.toggle_period();
+                    return;
+                }
+                // Handle 'B' - toggle between Algorithm and Vol.1 Band mode
+                KeyCode::Char('b') | KeyCode::Char('B') => {
+                    self.twilight_form.toggle_band_mode();
+                    return;
+                }
+                // Allow other navigation shortcuts
+                KeyCode::Char('h') | KeyCode::Char('H')
+                | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
+                | KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Char('?') | KeyCode::Char('v') | KeyCode::Char('V') => {
+                    // Fall through to normal navigation
+                }
+                // All other keys are handled by the twilight form
+                _ => {
+                    self.twilight_form.handle_input(key_event);
+                    return;
+                }
+            }
+        }
+
         match key_event.code {
             // Global keybindings
             KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -248,6 +338,12 @@ impl App {
             KeyCode::Char('t') | KeyCode::Char('T') => {
                 self.current_screen = Screen::ArcToTime;
             }
+            KeyCode::Char('w') | KeyCode::Char('W') => {
+                self.current_screen = Screen::Twilight;
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                self.current_screen = Screen::DrEp;
+            }
             KeyCode::Char('?') => {
                 self.current_screen = Screen::Help;
             }
@@ -271,6 +367,12 @@ impl App {
             KeyCode::Char('6') if self.current_screen == Screen::Home => {
                 self.current_screen = Screen::ArcToTime;
             }
+            KeyCode::Char('7') if self.current_screen == Screen::Home => {
+                self.current_screen = Screen::Twilight;
+            }
+            KeyCode::Char('8') if self.current_screen == Screen::Home => {
+                self.current_screen = Screen::DrEp;
+            }
 
             // Tab to cycle through screens
             KeyCode::Tab => {
@@ -281,7 +383,9 @@ impl App {
                     Screen::AutoCompute => Screen::Calculation,
                     Screen::Calculation => Screen::Averaging,
                     Screen::Averaging => Screen::ArcToTime,
-                    Screen::ArcToTime => Screen::Help,
+                    Screen::ArcToTime => Screen::Twilight,
+                    Screen::Twilight => Screen::DrEp,
+                    Screen::DrEp => Screen::Help,
                     Screen::Help => Screen::Home,
                 };
             }
@@ -296,7 +400,9 @@ impl App {
                     Screen::Calculation => Screen::AutoCompute,
                     Screen::Averaging => Screen::Calculation,
                     Screen::ArcToTime => Screen::Averaging,
-                    Screen::Help => Screen::ArcToTime,
+                    Screen::Twilight => Screen::ArcToTime,
+                    Screen::DrEp => Screen::Twilight,
+                    Screen::Help => Screen::DrEp,
                 };
             }
 
@@ -329,6 +435,34 @@ impl App {
         }
     }
 
+    /// Propagate the stored DR position to all screens that accept a DR position input
+    pub fn propagate_dr_position(&mut self) {
+        let stored = &self.dr_ep_form.stored;
+        if stored.dr_lat == 0.0 && stored.dr_lon == 0.0 {
+            return;
+        }
+        let (lat_str, lat_dir, lon_str, lon_dir) =
+            crate::dr_ep_screen::DrEpForm::decode_position(stored.dr_lat, stored.dr_lon);
+
+        // Twilight screen
+        self.twilight_form.latitude = lat_str.clone();
+        self.twilight_form.lat_direction = lat_dir;
+        self.twilight_form.longitude = lon_str.clone();
+        self.twilight_form.lon_direction = lon_dir;
+
+        // Auto compute screen (current sight)
+        self.auto_compute_form.current_sight.dr_latitude = lat_str.clone();
+        self.auto_compute_form.current_sight.lat_direction = lat_dir;
+        self.auto_compute_form.current_sight.dr_longitude = lon_str.clone();
+        self.auto_compute_form.current_sight.lon_direction = lon_dir;
+
+        // Calculation screen
+        self.calculation_form.latitude = lat_str;
+        self.calculation_form.latitude_direction = lat_dir;
+        self.calculation_form.longitude = lon_str;
+        self.calculation_form.longitude_direction = lon_dir;
+    }
+
     /// Returns the title for the current screen
     pub fn current_screen_title(&self) -> &str {
         match self.current_screen {
@@ -339,6 +473,8 @@ impl App {
             Screen::Calculation => "Sight Reduction Calculator",
             Screen::Averaging => "Sight Averaging",
             Screen::ArcToTime => "Arc to Time Calculator",
+            Screen::Twilight => "Twilight & Visibility",
+            Screen::DrEp => "Dead Reckoning & Estimated Position",
             Screen::Help => "Help & Instructions",
         }
     }

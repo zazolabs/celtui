@@ -3,12 +3,12 @@
 //!
 //! TWO METHODS for star sight reduction:
 //!
-//! METHOD 1: Pub 249 Vol 1 TABLES (Manual method with paper tables)
+//! METHOD 1: SRT TABLES (Sight Reduction Tables - manual method with paper tables)
 //! - GHA Aries = 86° 03.3' = 86.055° (from almanac)
 //! - DR Lon = 20° W = -20°
 //! - MUST optimize chosen lon to make LHA Aries whole (for table lookup)
 //! - Chosen lon = 20° 03.9' W = -20.065° → LHA Aries = 66° (whole)
-//! - Look up in Pub 249 Vol 1 with LHA Aries=66° and "Pollux"
+//! - Look up in SRT with LHA Aries=66° and "Pollux"
 //! - Result from tables: Hc = 46° 04', Az = 104° T
 //!
 //! METHOD 2: DIRECT CALCULATION (Our spherical trig method - what we implement)
@@ -56,7 +56,7 @@ fn test_pollux_direct_calculation_no_optimization() {
         expected_lha_pollux, lha_pollux
     );
 
-    // Calculate LHA Aries for comparison with Pub 249 Vol 1
+    // Calculate LHA Aries for comparison with SRT
     let lha_aries = (gha_aries + dr_lon + 360.0) % 360.0;
     // LHA Aries = 86.055 - 20 = 66.055° (also with decimals)
     let expected_lha_aries: f64 = 66.055;
@@ -66,7 +66,7 @@ fn test_pollux_direct_calculation_no_optimization() {
         expected_lha_aries, lha_aries
     );
 
-    // For Pub 249 Vol 1 table lookup, user would:
+    // For SRT table lookup, user would:
     // - Round LHA Aries to nearest whole: 66°
     // - Enter table with LHA Aries=66° and star name "Pollux"
     // - Get Hc ≈ 46° 04', Az ≈ 104° T

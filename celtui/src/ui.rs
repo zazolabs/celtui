@@ -10,6 +10,8 @@ use crate::sight_reduction_screen::render_sight_reduction_screen;
 use crate::auto_compute_screen::render_auto_compute_screen;
 use crate::averaging_screen::render_averaging_screen;
 use crate::arc_to_time_screen::render_arc_to_time_screen;
+use crate::twilight_screen;
+use crate::dr_ep_screen;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -42,6 +44,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         Screen::Calculation => render_calculation_screen(frame, chunks[1], &app.calculation_form),
         Screen::Averaging => render_averaging_screen(frame, chunks[1], &app.averaging_form),
         Screen::ArcToTime => render_arc_to_time_screen(frame, chunks[1], &app.arc_to_time_form),
+        Screen::Twilight => twilight_screen::render(frame, chunks[1], &app.twilight_form),
+        Screen::DrEp => dr_ep_screen::render(frame, chunks[1], &app.dr_ep_form),
         Screen::Help => render_help_screen(frame, chunks[1]),
     }
 
@@ -112,6 +116,8 @@ fn render_home_screen(frame: &mut Frame, area: Rect) {
         ListItem::new("4. Automatic Fix Computation").style(Style::default().fg(Color::Blue)),
         ListItem::new("5. Sight Averaging").style(Style::default().fg(Color::LightBlue)),
         ListItem::new("6. Arc to Time Calculator").style(Style::default().fg(Color::LightGreen)),
+        ListItem::new("7. Twilight & Visibility").style(Style::default().fg(Color::LightMagenta)),
+        ListItem::new("8. DR & Estimated Position").style(Style::default().fg(Color::LightRed)),
         ListItem::new(""),
         ListItem::new("?. Help & Instructions").style(Style::default().fg(Color::Magenta)),
         ListItem::new("Q. Quit Application").style(Style::default().fg(Color::Red)),
@@ -151,10 +157,12 @@ fn render_help_screen(frame: &mut Frame, area: Rect) {
         Line::from("  C       - Sight reduction calculator"),
         Line::from("  V       - Sight averaging"),
         Line::from("  T       - Arc to time calculator"),
+        Line::from("  W       - Twilight & visibility"),
+        Line::from("  D       - DR & Estimated Position"),
         Line::from("  ?       - This help screen"),
         Line::from("  Tab     - Next screen"),
         Line::from("  Shift+Tab - Previous screen"),
-        Line::from("  1-6     - Quick select (from home)"),
+        Line::from("  1-8     - Quick select (from home)"),
         Line::from(""),
         Line::from(Span::styled("Almanac Screen:", Style::default().add_modifier(Modifier::UNDERLINED))),
         Line::from("  Tab     - Next field"),
@@ -193,6 +201,20 @@ fn render_help_screen(frame: &mut Frame, area: Rect) {
         Line::from("  Del     - Clear all fields"),
         Line::from("  E/W     - Set longitude direction"),
         Line::from("  Space   - Toggle E/W direction"),
+        Line::from(""),
+        Line::from(Span::styled("Twilight & Visibility:", Style::default().add_modifier(Modifier::UNDERLINED))),
+        Line::from("  Tab     - Next field"),
+        Line::from("  Enter   - Calculate twilight times"),
+        Line::from("  T       - Toggle morning/evening twilight"),
+        Line::from("  N/S     - Set latitude direction"),
+        Line::from("  E/W     - Set longitude direction"),
+        Line::from(""),
+        Line::from(Span::styled("DR & Estimated Position:", Style::default().add_modifier(Modifier::UNDERLINED))),
+        Line::from("  F1/F2/F3 - Switch section (DR / Running Fix / EP)"),
+        Line::from("  Tab     - Next field in section"),
+        Line::from("  Enter   - Save DR / Advance DR / Calculate EP"),
+        Line::from("  Space   - Toggle time/log distance mode"),
+        Line::from("  N/S     - Latitude direction  |  E/W - Longitude direction"),
         Line::from(""),
         Line::from(Span::styled("General:", Style::default().add_modifier(Modifier::UNDERLINED))),
         Line::from("  Q       - Quit (from home) or Back"),

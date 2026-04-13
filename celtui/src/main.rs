@@ -11,6 +11,8 @@ mod sight_reduction_screen;
 mod auto_compute_screen;
 mod averaging_screen;
 mod arc_to_time_screen;
+mod twilight_screen;
+mod dr_ep_screen;
 mod persistence;
 mod export;
 mod validation;

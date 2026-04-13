@@ -3,16 +3,17 @@
 //! This module provides a screen for entering multiple celestial sights,
 //! computing their Lines of Position, and calculating a fix from multiple LOPs.
 
-use chrono::{NaiveDate, NaiveTime, TimeZone, Utc};
-use celtnav::almanac::{CelestialBody as AlmanacBody, Planet, get_body_position};
+use chrono::{Datelike, NaiveDate, NaiveTime, TimeZone, Utc};
+use celtnav::almanac::{CelestialBody as AlmanacBody, Planet, get_body_position, is_leap_year};
 use celtnav::sight_reduction::{
     compute_altitude, compute_azimuth, compute_intercept, SightData,
     apply_refraction_correction, apply_dip_correction,
     apply_semidiameter_correction, apply_parallax_correction,
     optimize_chosen_position,
 };
-use celtnav::fix_calculation::{LineOfPosition, fix_from_multiple_lops, Fix, advance_lop};
-use crossterm::event::{KeyCode, KeyEvent};
+use celtnav::fix_calculation::{LineOfPosition, fix_from_multiple_lops, Fix, advance_lop, advance_position};
+use celtnav::sight_averaging::{SextantObservation, average_sights};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -91,7 +92,7 @@ impl SightCelestialBody {
 /// - The intercept distance (toward/away from the body)
 /// - The true azimuth bearing to the body
 ///
-/// For stars, also includes GHA Aries and LHA Aries for Pub 249 Vol 1 table lookup comparison.
+/// For stars, also includes GHA Aries and LHA Aries for SRT (Sight Reduction Tables) lookup comparison.
 ///
 /// To plot the LOP on a chart:
 /// 1. Mark the DR position
@@ -108,6 +109,8 @@ pub struct LopDisplayData {
     pub chosen_lon: f64,
     /// Observed altitude (Ho) in degrees after all corrections
     pub ho: f64,
+    /// Declination in decimal degrees (positive = North, negative = South)
+    pub declination: f64,
     /// Greenwich Hour Angle (GHA) in degrees
     /// For stars, this is GHA of the star (GHA Aries + SHA combined)
     pub gha: f64,
@@ -115,16 +118,16 @@ pub struct LopDisplayData {
     /// For stars, this is LHA of the star used in spherical trig calculations
     pub lha: f64,
     /// GHA Aries in degrees (only for stars, None for other bodies)
-    /// For Pub 249 Vol 1 table lookup comparison
+    /// For SRT (Sight Reduction Tables) lookup comparison
     pub gha_aries: Option<f64>,
-    /// Optimized chosen latitude for Pub 249 tables (only for stars, None for other bodies)
+    /// Optimized chosen latitude for SRT tables (only for stars, None for other bodies)
     /// Latitude rounded to nearest whole degree for easier plotting
     pub pub249_chosen_lat: Option<f64>,
-    /// Optimized chosen longitude for Pub 249 tables (only for stars, None for other bodies)
+    /// Optimized chosen longitude for SRT tables (only for stars, None for other bodies)
     /// Longitude adjusted to make LHA Aries a whole number for table lookup
     pub pub249_chosen_lon: Option<f64>,
     /// LHA Aries as whole number (only for stars, None for other bodies)
-    /// For Pub 249 Vol 1 table lookup: enter tables with this whole LHA Aries and star name
+    /// For SRT table lookup: enter tables with this whole LHA Aries and star name
     pub lha_aries: Option<f64>,
     /// Calculated altitude (Hc) in degrees using spherical trigonometry
     pub hc: f64,
@@ -158,6 +161,16 @@ pub struct Sight {
     pub dr_longitude: String,      // DR position longitude "DD MM.M"
     pub lat_direction: char,       // N/S
     pub lon_direction: char,       // E/W
+    #[serde(default)]
+    pub log_reading: String,       // Cumulative log in NM (optional, e.g., "103.5")
+    #[serde(default)]
+    pub heading: String,           // Vessel heading in degrees (optional, e.g., "045")
+    #[serde(default = "default_is_active")]
+    pub is_active: bool,           // False when sight is averaged into another sight
+}
+
+fn default_is_active() -> bool {
+    true
 }
 
 impl Sight {
@@ -173,13 +186,20 @@ impl Sight {
             dr_longitude: String::new(),
             lat_direction: 'N',
             lon_direction: 'W',
+            log_reading: String::new(),
+            heading: String::new(),
+            is_active: true,
         }
     }
 
     pub fn display_summary(&self) -> String {
+        let body_display = match &self.body {
+            SightCelestialBody::Star(name) => format!("Star: {}", name),
+            _ => self.body.name(),
+        };
         format!(
             "{} @ {} {} - Hs: {}",
-            self.body.name(),
+            body_display,
             self.date,
             self.time,
             self.sextant_altitude
@@ -205,6 +225,8 @@ pub enum SightInputField {
     LatDirection,      // N/S direction immediately follows DRLatitude
     DRLongitude,
     LonDirection,      // E/W direction immediately follows DRLongitude
+    LogReading,        // Cumulative log reading in NM (optional)
+    Heading,           // Vessel heading in degrees (optional)
 }
 
 impl SightInputField {
@@ -221,6 +243,8 @@ impl SightInputField {
             SightInputField::LatDirection,  // N/S immediately follows DRLatitude
             SightInputField::DRLongitude,
             SightInputField::LonDirection,  // E/W immediately follows DRLongitude
+            SightInputField::LogReading,
+            SightInputField::Heading,
         ]
     }
 
@@ -255,6 +279,8 @@ impl SightInputField {
             SightInputField::DRLongitude => "DR Longitude [DD MM.M]",
             SightInputField::LatDirection => "Latitude (N/S)",
             SightInputField::LonDirection => "Longitude (E/W)",
+            SightInputField::LogReading => "Log Reading (optional, NM)",
+            SightInputField::Heading => "Heading (optional, degrees 0-360)",
         }
     }
 }
@@ -266,6 +292,9 @@ pub struct AutoComputeForm {
     pub current_sight: Sight,
     pub current_field: SightInputField,
     pub selected_sight_index: Option<usize>,
+    pub editing_sight_index: Option<usize>,  // Track which sight is being edited
+    pub selected_sight_indices: Vec<usize>,  // Multiple selection for averaging
+    pub multi_select_mode: bool,             // Whether in multi-select mode
     pub fix_result: Option<Fix>,
     pub lop_data: Vec<LopDisplayData>,  // LOP data for each sight in the fix
     pub error_message: Option<String>,
@@ -306,6 +335,9 @@ impl AutoComputeForm {
             current_sight: Sight::new(),
             current_field: SightInputField::Body,
             selected_sight_index: None,
+            editing_sight_index: None,
+            selected_sight_indices: Vec::new(),
+            multi_select_mode: false,
             fix_result: None,
             lop_data: Vec::new(),
             error_message: None,
@@ -320,10 +352,20 @@ impl AutoComputeForm {
 
     pub fn next_field(&mut self) {
         self.current_field = self.current_field.next();
+
+        // Skip StarName field if current body is not a star
+        if self.current_field == SightInputField::StarName && !self.current_sight.is_star() {
+            self.current_field = self.current_field.next();
+        }
     }
 
     pub fn previous_field(&mut self) {
         self.current_field = self.current_field.previous();
+
+        // Skip StarName field if current body is not a star
+        if self.current_field == SightInputField::StarName && !self.current_sight.is_star() {
+            self.current_field = self.current_field.previous();
+        }
     }
 
     pub fn get_field_value(&self, field: SightInputField) -> String {
@@ -346,6 +388,8 @@ impl AutoComputeForm {
             SightInputField::DRLongitude => self.current_sight.dr_longitude.clone(),
             SightInputField::LatDirection => self.current_sight.lat_direction.to_string(),
             SightInputField::LonDirection => self.current_sight.lon_direction.to_string(),
+            SightInputField::LogReading => self.current_sight.log_reading.clone(),
+            SightInputField::Heading => self.current_sight.heading.clone(),
         }
     }
 
@@ -380,6 +424,8 @@ impl AutoComputeForm {
                     }
                 }
             }
+            SightInputField::LogReading => self.current_sight.log_reading = value,
+            SightInputField::Heading => self.current_sight.heading = value,
         }
     }
 
@@ -506,7 +552,9 @@ impl AutoComputeForm {
                     | SightInputField::IndexError
                     | SightInputField::HeightOfEye
                     | SightInputField::DRLatitude
-                    | SightInputField::DRLongitude => true,
+                    | SightInputField::DRLongitude
+                    | SightInputField::LogReading
+                    | SightInputField::Heading => true,
 
                     // Selection fields (use +/- or specific keys)
                     SightInputField::Body
@@ -556,6 +604,30 @@ impl AutoComputeForm {
                     Ok(())
                 }
             }
+            SightInputField::LogReading => {
+                // Optional field
+                if self.current_sight.log_reading.is_empty() {
+                    Ok(())
+                } else {
+                    match self.current_sight.log_reading.parse::<f64>() {
+                        Ok(log) if log >= 0.0 => Ok(()),
+                        Ok(_) => Err("Log reading cannot be negative".to_string()),
+                        Err(_) => Err("Log reading must be a number".to_string()),
+                    }
+                }
+            }
+            SightInputField::Heading => {
+                // Optional field
+                if self.current_sight.heading.is_empty() {
+                    Ok(())
+                } else {
+                    match self.current_sight.heading.parse::<f64>() {
+                        Ok(heading) if heading >= 0.0 && heading < 360.0 => Ok(()),
+                        Ok(_) => Err("Heading must be 0-360 degrees".to_string()),
+                        Err(_) => Err("Heading must be a number".to_string()),
+                    }
+                }
+            }
         };
 
         result.err()
@@ -600,17 +672,12 @@ impl AutoComputeForm {
 
         self.sights.push(self.current_sight.clone());
         self.current_sight = Sight::new();
+
         // Preserve common fields from previous sight
         if let Some(last) = self.sights.last() {
             // Preserve date and time (sights usually taken at similar times)
             self.current_sight.date = last.date.clone();
             self.current_sight.time = last.time.clone();
-
-            // Preserve DR position
-            self.current_sight.dr_latitude = last.dr_latitude.clone();
-            self.current_sight.dr_longitude = last.dr_longitude.clone();
-            self.current_sight.lat_direction = last.lat_direction;
-            self.current_sight.lon_direction = last.lon_direction;
 
             // Preserve index error (constant for a given sextant)
             self.current_sight.index_error = last.index_error.clone();
@@ -618,10 +685,33 @@ impl AutoComputeForm {
             // Preserve height of eye (constant for a given observer position)
             self.current_sight.height_of_eye = last.height_of_eye.clone();
 
+            // AUTO-CALCULATE DR if log and heading available
+            if let Some((new_lat, new_lon)) = self.calculate_dr_from_previous() {
+                // Convert back to DMS format
+                let lat_dms = celtnav::decimal_to_dms(new_lat.abs());
+                let lon_dms = celtnav::decimal_to_dms(new_lon.abs());
+
+                self.current_sight.dr_latitude = format!("{} {:.1}", lat_dms.degrees, lat_dms.minutes);
+                self.current_sight.dr_longitude = format!("{} {:.1}", lon_dms.degrees, lon_dms.minutes);
+                self.current_sight.lat_direction = if new_lat >= 0.0 { 'N' } else { 'S' };
+                self.current_sight.lon_direction = if new_lon >= 0.0 { 'E' } else { 'W' };
+
+                self.error_message = Some("Sight added! DR auto-calculated from log/heading. Enter another or press 'C'.".to_string());
+            } else {
+                // Preserve DR position if no log/heading available
+                self.current_sight.dr_latitude = last.dr_latitude.clone();
+                self.current_sight.dr_longitude = last.dr_longitude.clone();
+                self.current_sight.lat_direction = last.lat_direction;
+                self.current_sight.lon_direction = last.lon_direction;
+
+                self.error_message = Some("Sight added! Enter another or press 'C' to compute fix.".to_string());
+            }
+
             // Note: sextant_altitude and body are NOT preserved - they are reset
             // to default values for the next sight (via Sight::new())
+        } else {
+            self.error_message = Some("Sight added! Enter another or press 'C' to compute fix.".to_string());
         }
-        self.error_message = Some("Sight added! Enter another or press 'C' to compute fix.".to_string());
     }
 
     pub fn delete_selected_sight(&mut self) {
@@ -634,13 +724,266 @@ impl AutoComputeForm {
         }
     }
 
+    /// Calculate DR position for new sight based on previous sight's log and heading
+    pub fn calculate_dr_from_previous(&self) -> Option<(f64, f64)> {
+        use crate::validation::parse_dms;
+
+        let last_sight = self.sights.last()?;
+
+        // Need both log readings and heading
+        let last_log: f64 = last_sight.log_reading.parse().ok()?;
+        let current_log: f64 = self.current_sight.log_reading.parse().ok()?;
+        let heading: f64 = last_sight.heading.parse().ok()?;
+
+        // Calculate distance traveled
+        let distance_nm = (current_log - last_log).abs();
+
+        // Parse previous DR position
+        let (dr_lat_deg, dr_lat_min, _) = parse_dms(&last_sight.dr_latitude).ok()?;
+        let mut dr_lat = celtnav::dms_to_decimal(dr_lat_deg as i32, dr_lat_min as u32, 0.0);
+        if last_sight.lat_direction == 'S' {
+            dr_lat = -dr_lat;
+        }
+
+        let (dr_lon_deg, dr_lon_min, _) = parse_dms(&last_sight.dr_longitude).ok()?;
+        let mut dr_lon = celtnav::dms_to_decimal(dr_lon_deg as i32, dr_lon_min as u32, 0.0);
+        if last_sight.lon_direction == 'W' {
+            dr_lon = -dr_lon;
+        }
+
+        // Use celtnav's advance_position
+        // Since we have distance directly, use speed = distance_nm and time = 1.0 hour
+        let (new_lat, new_lon) = advance_position(dr_lat, dr_lon, heading, distance_nm, 1.0);
+
+        Some((new_lat, new_lon))
+    }
+
+    /// Enter edit mode for selected sight
+    pub fn edit_selected_sight(&mut self) {
+        if let Some(idx) = self.selected_sight_index {
+            if idx < self.sights.len() {
+                // Populate current_sight with selected sight's data
+                self.current_sight = self.sights[idx].clone();
+
+                // Store the index we're editing
+                self.editing_sight_index = Some(idx);
+
+                // Switch to EnteringSight mode
+                self.mode = AutoComputeMode::EnteringSight;
+                self.current_field = SightInputField::Body;
+
+                self.error_message = Some("Editing sight. Press Ctrl+S to save, Esc to cancel.".to_string());
+            }
+        }
+    }
+
+    /// Save edited sight back to the list
+    pub fn save_edited_sight(&mut self) {
+        if let Some(idx) = self.editing_sight_index {
+            if let Err(e) = self.validate_current_sight() {
+                self.error_message = Some(format!("Validation error: {}", e));
+                return;
+            }
+
+            // Replace the sight at the index
+            if idx < self.sights.len() {
+                self.sights[idx] = self.current_sight.clone();
+
+                // Clear edit state
+                self.editing_sight_index = None;
+                self.current_sight = Sight::new();
+                self.mode = AutoComputeMode::ViewingSights;
+
+                // Clear fix result since sights changed
+                self.fix_result = None;
+                self.lop_data.clear();
+
+                self.error_message = Some("Sight updated successfully!".to_string());
+            }
+        }
+    }
+
+    /// Cancel editing without saving
+    pub fn cancel_edit(&mut self) {
+        self.editing_sight_index = None;
+        self.current_sight = Sight::new();
+        self.mode = AutoComputeMode::ViewingSights;
+        self.error_message = Some("Edit cancelled.".to_string());
+    }
+
+    /// Toggle multi-select mode
+    pub fn toggle_multi_select(&mut self) {
+        self.multi_select_mode = !self.multi_select_mode;
+        if !self.multi_select_mode {
+            self.selected_sight_indices.clear();
+        }
+        self.error_message = Some(
+            if self.multi_select_mode {
+                "Multi-select mode ON. Press Space to select, 'A' to average selected sights.".to_string()
+            } else {
+                "Multi-select mode OFF.".to_string()
+            }
+        );
+    }
+
+    /// Toggle selection of current sight in multi-select mode
+    pub fn toggle_sight_selection(&mut self) {
+        if !self.multi_select_mode {
+            return;
+        }
+
+        if let Some(idx) = self.selected_sight_index {
+            if let Some(pos) = self.selected_sight_indices.iter().position(|&x| x == idx) {
+                self.selected_sight_indices.remove(pos);
+            } else {
+                self.selected_sight_indices.push(idx);
+            }
+        }
+    }
+
+    /// Check if sights can be averaged (same body, within 5 minutes)
+    pub fn can_average_sights(&self, indices: &[usize]) -> Result<(), String> {
+        if indices.len() < 2 {
+            return Err("Need at least 2 sights to average".to_string());
+        }
+
+        // Get all selected sights
+        let sights: Vec<&Sight> = indices.iter()
+            .filter_map(|&i| self.sights.get(i))
+            .collect();
+
+        // Check same body
+        let first_body = &sights[0].body;
+        for sight in &sights[1..] {
+            if format!("{:?}", sight.body) != format!("{:?}", first_body) {
+                return Err("All sights must be of the same celestial body".to_string());
+            }
+        }
+
+        // Check within 5 minutes
+        let mut times = Vec::new();
+        for sight in &sights {
+            let date = NaiveDate::parse_from_str(&sight.date, "%Y-%m-%d")
+                .map_err(|_| "Invalid date format")?;
+            let time = NaiveTime::parse_from_str(&sight.time, "%H:%M:%S")
+                .or_else(|_| NaiveTime::parse_from_str(&sight.time, "%H:%M"))
+                .map_err(|_| "Invalid time format")?;
+            times.push((date, time));
+        }
+
+        // Find min and max time
+        let (min_date, min_time) = times.iter().min().unwrap();
+        let (max_date, max_time) = times.iter().max().unwrap();
+
+        // Calculate time difference
+        if min_date != max_date {
+            return Err("All sights must be on the same day".to_string());
+        }
+
+        let time_diff_seconds = (max_time.signed_duration_since(*min_time)).num_seconds().abs();
+        if time_diff_seconds > 300 {  // 5 minutes = 300 seconds
+            return Err("Sights must be within 5 minutes of each other".to_string());
+        }
+
+        Ok(())
+    }
+
+    /// Average selected sights
+    pub fn average_selected_sights(&mut self) {
+        use crate::validation::parse_dms;
+
+        // Validate selection
+        if let Err(e) = self.can_average_sights(&self.selected_sight_indices) {
+            self.error_message = Some(format!("Cannot average: {}", e));
+            return;
+        }
+
+        // Get selected sights
+        let selected_sights: Vec<&Sight> = self.selected_sight_indices.iter()
+            .filter_map(|&i| self.sights.get(i))
+            .collect();
+
+        // Convert to SextantObservations
+        let observations: Vec<SextantObservation> = selected_sights.iter()
+            .filter_map(|sight| {
+                let time = NaiveTime::parse_from_str(&sight.time, "%H:%M:%S")
+                    .or_else(|_| NaiveTime::parse_from_str(&sight.time, "%H:%M"))
+                    .ok()?;
+
+                let (deg, min, sec) = parse_dms(&sight.sextant_altitude).ok()?;
+                let altitude_decimal = celtnav::dms_to_decimal(deg as i32, min as u32, sec);
+                let altitude_dms = celtnav::decimal_to_dms(altitude_decimal);
+
+                Some(SextantObservation {
+                    time,
+                    altitude_degrees: altitude_dms.degrees as f64,
+                    altitude_minutes: altitude_dms.minutes as f64,
+                })
+            })
+            .collect();
+
+        if observations.len() < 2 {
+            self.error_message = Some("Need at least 2 valid observations to average".to_string());
+            return;
+        }
+
+        // Calculate average
+        let averaged = match average_sights(&observations) {
+            Some(avg) => avg,
+            None => {
+                self.error_message = Some("Failed to calculate average".to_string());
+                return;
+            }
+        };
+
+        // Create new averaged sight based on first selected sight
+        let mut new_sight = selected_sights[0].clone();
+
+        // Update time to averaged time
+        new_sight.time = averaged.avg_time.format("%H:%M:%S").to_string();
+
+        // Update altitude to averaged altitude
+        let avg_decimal = averaged.avg_altitude_degrees + averaged.avg_altitude_minutes / 60.0;
+        let avg_dms = celtnav::decimal_to_dms(avg_decimal);
+        new_sight.sextant_altitude = format!("{} {:.1}", avg_dms.degrees, avg_dms.minutes);
+
+        // Mark new sight as active (it's the averaged result)
+        new_sight.is_active = true;
+
+        // Mark original sights as inactive instead of removing them
+        for &idx in &self.selected_sight_indices {
+            if idx < self.sights.len() {
+                self.sights[idx].is_active = false;
+            }
+        }
+
+        // Add averaged sight to the list
+        self.sights.push(new_sight);
+
+        // Clear selection state
+        self.selected_sight_indices.clear();
+        self.multi_select_mode = false;
+        self.selected_sight_index = None;
+
+        // Clear fix result
+        self.fix_result = None;
+        self.lop_data.clear();
+
+        self.error_message = Some(format!("Averaged {} sights successfully!", observations.len()));
+    }
+
     pub fn compute_fix(&mut self) {
         self.fix_result = None;
         self.lop_data = Vec::new();
         self.error_message = None;
 
-        if self.sights.len() < 2 {
-            self.error_message = Some("Need at least 2 sights to compute a fix".to_string());
+        // Filter to only use active sights
+        let active_sights: Vec<&Sight> = self.sights.iter()
+            .filter(|sight| sight.is_active)
+            .collect();
+
+        if active_sights.len() < 2 {
+            self.error_message = Some("Need at least 2 active sights to compute a fix".to_string());
             return;
         }
 
@@ -661,11 +1004,11 @@ impl AutoComputeForm {
             }
         };
 
-        // Compute LOP for each sight with timestamps and display data
+        // Compute LOP for each active sight with timestamps and display data
         let mut lops_with_times: Vec<(LineOfPosition, chrono::DateTime<Utc>, &Sight)> = Vec::new();
         let mut lop_display_data: Vec<LopDisplayData> = Vec::new();
 
-        for sight in &self.sights {
+        for sight in active_sights {
             match self.compute_lop_with_display_data(sight) {
                 Ok((lop, time, display_data)) => {
                     lops_with_times.push((lop, time, sight));
@@ -802,7 +1145,7 @@ impl AutoComputeForm {
 
         // For spherical trigonometry calculations, use DR position directly
         // (No optimization needed - LHA can have decimal values)
-        // Note: Optimization is only needed for Pub 249 table lookups
+        // Note: Optimization is only needed for SRT table lookups
         let chosen_lat = dr_latitude;
         let chosen_lon = dr_longitude;
 
@@ -856,19 +1199,26 @@ impl AutoComputeForm {
             dr_longitude,
         };
 
-        // For stars, calculate Pub 249 Vol 1 data (optimized position and whole LHA Aries)
+        // For stars, calculate SRT data (optimized position and whole LHA Aries)
         // This allows user to verify against table lookups
         let (gha_aries, pub249_chosen_lat, pub249_chosen_lon, lha_aries) =
             if let SightCelestialBody::Star(star_name) = &sight.body {
-                use celtnav::almanac::find_star;
+                use celtnav::almanac::find_star_for_year;
 
                 // For stars: GHA star = GHA Aries + SHA star
                 // So: GHA Aries = GHA star - SHA star
                 // This ensures consistency with the GHA star value we're using
-                let star = find_star(star_name).ok_or_else(|| format!("Star '{}' not found", star_name))?;
+                // IMPORTANT: Use proper-motion-corrected star position for the observation year
+                let year = datetime.year() as f64;
+                let day_of_year = datetime.ordinal() as f64;
+                let days_in_year = if is_leap_year(datetime.year()) { 366.0 } else { 365.0 };
+                let observation_year = year + (day_of_year - 1.0) / days_in_year;
+
+                let star = find_star_for_year(star_name, observation_year)
+                    .ok_or_else(|| format!("Star '{}' not found", star_name))?;
                 let gha_aries_val = (position.gha - star.sha + 360.0) % 360.0;
 
-                // Optimize chosen position to make LHA Aries a whole number (for Pub 249 tables)
+                // Optimize chosen position to make LHA Aries a whole number (for SRT tables)
                 let (opt_lat, opt_lon) = optimize_chosen_position(dr_latitude, dr_longitude, gha_aries_val);
 
                 // Calculate LHA Aries with optimized position
@@ -882,12 +1232,13 @@ impl AutoComputeForm {
                 (None, None, None, None)
             };
 
-        // Display data shows DR position for trig calc, plus Pub 249 data for stars
+        // Display data shows DR position for trig calc, plus SRT data for stars
         let display_data = LopDisplayData {
             body_name: sight.body.name(),
             chosen_lat,
             chosen_lon,
             ho,
+            declination: position.declination,
             gha: position.gha,
             lha,
             gha_aries,
@@ -1054,7 +1405,10 @@ impl AutoComputeForm {
                     AutoComputeMode::EditingRunningFix => {
                         self.running_fix_field = self.running_fix_field.next();
                     }
-                    _ => {}
+                    AutoComputeMode::ViewingSights => {
+                        // Tab switches back to EnteringSight mode
+                        self.mode = AutoComputeMode::EnteringSight;
+                    }
                 }
             }
             KeyCode::BackTab => {
@@ -1063,7 +1417,10 @@ impl AutoComputeForm {
                     AutoComputeMode::EditingRunningFix => {
                         self.running_fix_field = self.running_fix_field.next();
                     }
-                    _ => {}
+                    AutoComputeMode::ViewingSights => {
+                        // BackTab also switches back to EnteringSight mode
+                        self.mode = AutoComputeMode::EnteringSight;
+                    }
                 }
             }
             KeyCode::Enter => {
@@ -1072,7 +1429,11 @@ impl AutoComputeForm {
                         // If on StarName field, select current highlighted star
                         if self.current_field == SightInputField::StarName {
                             self.select_current_star();
+                        } else if self.editing_sight_index.is_some() {
+                            // If editing, save the edited sight
+                            self.save_edited_sight();
                         } else {
+                            // Otherwise, add a new sight
                             self.add_sight();
                         }
                     }
@@ -1216,6 +1577,12 @@ impl AutoComputeForm {
                     _ => {}
                 }
             }
+            // Handle Ctrl+S for saving edited sight (must come before general Char handler)
+            KeyCode::Char('s') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if self.editing_sight_index.is_some() {
+                    self.save_edited_sight();
+                }
+            }
             KeyCode::Char(c) => {
                 match self.mode {
                     AutoComputeMode::EnteringSight => {
@@ -1245,9 +1612,28 @@ impl AutoComputeForm {
                         }
                     }
                     AutoComputeMode::ViewingSights => {
-                        // In viewing mode, 'D' deletes the selected sight
-                        if c == 'd' || c == 'D' {
-                            self.delete_selected_sight();
+                        match c {
+                            // Delete selected sight
+                            'd' | 'D' => {
+                                self.delete_selected_sight();
+                            }
+                            // Edit selected sight
+                            'e' | 'E' => {
+                                self.edit_selected_sight();
+                            }
+                            // Toggle multi-select mode
+                            'm' | 'M' => {
+                                self.toggle_multi_select();
+                            }
+                            // Average selected sights (only in multi-select mode)
+                            'a' | 'A' if self.multi_select_mode => {
+                                self.average_selected_sights();
+                            }
+                            // Toggle sight selection (Space bar, only in multi-select mode)
+                            ' ' if self.multi_select_mode => {
+                                self.toggle_sight_selection();
+                            }
+                            _ => {}
                         }
                     }
                     AutoComputeMode::EditingRunningFix => {
@@ -1282,6 +1668,12 @@ impl AutoComputeForm {
                         }
                     }
                     _ => {}
+                }
+            }
+            KeyCode::Esc => {
+                // Cancel editing if in edit mode
+                if self.editing_sight_index.is_some() && self.mode == AutoComputeMode::EnteringSight {
+                    self.cancel_edit();
                 }
             }
             _ => {}
@@ -1419,11 +1811,19 @@ fn render_input_form(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
 
     frame.render_widget(paragraph, chunks[0]);
 
-    let help_lines = vec![
-        Line::from("Enter: Add Sight | C: Compute Fix | V: View Sights | R: Running Fix | +/- or ←→: Cycle Options"),
-        Line::from("Star field: Up/Down: Navigate | Enter: Select | Type to filter stars"),
-        Line::from("F2: Save | F3: Load | F5: Export Log | F6: Export CSV"),
-    ];
+    // Context-aware help text based on mode
+    let help_lines = if form.editing_sight_index.is_some() {
+        vec![
+            Line::from("EDITING SIGHT: Enter or Ctrl+S: Save | Esc: Cancel | Tab/Shift+Tab: Navigate"),
+            Line::from("+/- or ←→: Cycle Body/Direction | Star field: Enter to select | Type to edit fields"),
+        ]
+    } else {
+        vec![
+            Line::from("Enter: Add Sight | C: Compute Fix | V: View Sights | R: Running Fix | +/- or ←→: Cycle Options"),
+            Line::from("Star field: Up/Down: Navigate | Enter: Select | Type to filter stars"),
+            Line::from("F2: Save | F3: Load | F5: Export Log | F6: Export CSV"),
+        ]
+    };
     let help_widget = Paragraph::new(help_lines)
         .style(Style::default().fg(Color::DarkGray))
         .alignment(Alignment::Center);
@@ -1445,19 +1845,56 @@ fn render_sights_list(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
         .enumerate()
         .map(|(i, sight)| {
             let is_selected = form.selected_sight_index == Some(i);
+            let is_multi_selected = form.selected_sight_indices.contains(&i);
+
+            // Checkbox for multi-select mode
+            let checkbox = if form.multi_select_mode {
+                if is_multi_selected { "[✓] " } else { "[ ] " }
+            } else {
+                ""
+            };
+
+            // Style based on selection and active status
             let style = if is_selected {
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else if is_multi_selected {
+                Style::default().fg(Color::Cyan)
+            } else if !sight.is_active {
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM)
             } else {
                 Style::default().fg(Color::White)
             };
-            ListItem::new(sight.display_summary()).style(style)
+
+            // Enhanced display with log and heading if available
+            let mut display = sight.display_summary();
+            if !sight.log_reading.is_empty() || !sight.heading.is_empty() {
+                display.push_str(&format!(" [Log:{} Hdg:{}]",
+                    if sight.log_reading.is_empty() { "-" } else { &sight.log_reading },
+                    if sight.heading.is_empty() { "-" } else { &sight.heading }
+                ));
+            }
+
+            // Mark inactive sights
+            if !sight.is_active {
+                display.push_str(" (inactive)");
+            }
+
+            ListItem::new(format!("{}{}", checkbox, display)).style(style)
         })
         .collect();
+
+    let title = if form.multi_select_mode {
+        format!(" Sights ({}) - MULTI-SELECT MODE ", form.sights.len())
+    } else if form.editing_sight_index.is_some() {
+        format!(" Sights ({}) - EDITING ", form.sights.len())
+    } else {
+        format!(" Sights ({}) ", form.sights.len())
+    };
 
     let list = List::new(items)
         .block(
             Block::default()
-                .title(format!(" Sights ({}) ", form.sights.len()))
+                .title(title)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Green)),
         );
@@ -1488,7 +1925,7 @@ fn render_sights_list(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
         "  "
     };
 
-    let running_fix_lines = vec![
+    let mut running_fix_lines = vec![
         Line::from(""),
         Line::from(vec![
             Span::styled(course_cursor, Style::default().fg(Color::Yellow)),
@@ -1503,6 +1940,22 @@ fn render_sights_list(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
             Span::styled(" knots", speed_style),
         ]),
     ];
+
+    // Add mode-specific help text for ViewingSights mode
+    if form.mode == AutoComputeMode::ViewingSights {
+        running_fix_lines.push(Line::from(""));
+        if form.multi_select_mode {
+            running_fix_lines.push(Line::from(
+                Span::styled("↑↓: Navigate | Space: Select | A: Average | M: Exit | Tab: Back to Entry",
+                    Style::default().fg(Color::DarkGray))
+            ));
+        } else {
+            running_fix_lines.push(Line::from(
+                Span::styled("↑↓: Navigate | E: Edit | D: Delete | M: Multi-select | Tab: Back to Entry",
+                    Style::default().fg(Color::DarkGray))
+            ));
+        }
+    }
 
     let rf_border_style = if is_editing_rf {
         Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
@@ -1670,24 +2123,44 @@ fn render_lop_column(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData],
             ),
         ]));
 
-        // Chosen position - combined on one line
+        // Dead Reckoning (DR) position - combined on one line - used as is for trig calculations
         lop_lines.push(Line::from(vec![
-            Span::styled("  Chosen: ", Style::default().fg(Color::Cyan)),
+            Span::styled("  DR: ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                format!("{} {:02}° {:05.2}', {} {:03}° {:05.2}'",
+                format!("{} {:02}° {:05.2}', {} {:03}° {:04.1}'",
                     lat_sign, lat_dms.degrees, lat_dms.minutes,
                     lon_sign, lon_dms.degrees, lon_dms.minutes),
                 Style::default().fg(Color::White)
             ),
         ]));
 
-        // Ho, GHA, LHA on one line
+        // Ho and Hc on one line
         lop_lines.push(Line::from(vec![
             Span::styled("  Ho: ", Style::default().fg(Color::Cyan)),
             Span::styled(
                 format!("{:02}° {:04.1}'", ho_dms.degrees, ho_dms.minutes),
                 Style::default().fg(Color::White)
             ),
+            Span::styled("  Hc: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:02}° {:04.1}'", hc_dms.degrees, hc_dms.minutes),
+                Style::default().fg(Color::White)
+            ),
+        ]));
+
+        // Declination on one line
+        let dec_sign = if lop.declination >= 0.0 { "N" } else { "S" };
+        let dec_dms = celtnav::decimal_to_dms(lop.declination.abs());
+        lop_lines.push(Line::from(vec![
+            Span::styled("  Dec: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{} {:02}° {:04.1}'", dec_sign, dec_dms.degrees, dec_dms.minutes),
+                Style::default().fg(Color::White)
+            ),
+        ]));
+
+        // GHA and LHA on one line
+        lop_lines.push(Line::from(vec![
             Span::styled("  GHA: ", Style::default().fg(Color::Cyan)),
             Span::styled(
                 format!("{:03}° {:04.1}'", gha_dms.degrees, gha_dms.minutes),
@@ -1700,24 +2173,43 @@ fn render_lop_column(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData],
             ),
         ]));
 
-        // For stars, show Pub 249 Vol 1 data (optimized position and whole LHA Aries)
+        // Intercept and Azimuth on one line
+        let intercept_color = if lop.intercept >= 0.0 {
+            Color::Green
+        } else {
+            Color::Red
+        };
+        lop_lines.push(Line::from(vec![
+            Span::styled("  Intercept: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                lop.intercept_with_direction(),
+                Style::default().fg(intercept_color)
+            ),
+            Span::styled("  Z: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:03.0}° T", lop.azimuth),
+                Style::default().fg(Color::White)
+            ),
+        ]));
+
+        // For stars, show SRT data (optimized position and whole LHA Aries)
         if let (Some(gha_aries), Some(pub249_lat), Some(pub249_lon), Some(lha_aries)) =
             (lop.gha_aries, lop.pub249_chosen_lat, lop.pub249_chosen_lon, lop.lha_aries)
         {
             let gha_aries_dms = celtnav::decimal_to_dms(gha_aries.abs());
 
-            // Pub 249 optimized chosen position
+            // SRT optimized chosen position
             let pub249_lat_sign = if pub249_lat >= 0.0 { "N" } else { "S" };
             let pub249_lat_dms = celtnav::decimal_to_dms(pub249_lat.abs());
 
             let pub249_lon_sign = if pub249_lon >= 0.0 { "E" } else { "W" };
             let pub249_lon_dms = celtnav::decimal_to_dms(pub249_lon.abs());
 
-            // Line 1: Pub 249 optimized chosen position
+            // Line 1: SRT optimized chosen position
             lop_lines.push(Line::from(vec![
-                Span::styled("  Pub 249: ", Style::default().fg(Color::Yellow)),
+                Span::styled("  SRT CP: ", Style::default().fg(Color::Yellow)),
                 Span::styled(
-                    format!("{} {:02}° {:05.2}', {} {:03}° {:05.2}'",
+                    format!("{} {:02}° {:05.2}', {} {:03}° {:04.1}'",
                         pub249_lat_sign, pub249_lat_dms.degrees, pub249_lat_dms.minutes,
                         pub249_lon_sign, pub249_lon_dms.degrees, pub249_lon_dms.minutes),
                     Style::default().fg(Color::White)
@@ -1739,30 +2231,6 @@ fn render_lop_column(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData],
                 Span::styled(" (table)", Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
             ]));
         }
-
-        // Hc, Intercept, and Azimuth on one line
-        let intercept_color = if lop.intercept >= 0.0 {
-            Color::Green
-        } else {
-            Color::Red
-        };
-        lop_lines.push(Line::from(vec![
-            Span::styled("  Hc: ", Style::default().fg(Color::Cyan)),
-            Span::styled(
-                format!("{:02}° {:04.1}'", hc_dms.degrees, hc_dms.minutes),
-                Style::default().fg(Color::White)
-            ),
-            Span::styled("  Int: ", Style::default().fg(Color::Cyan)),
-            Span::styled(
-                lop.intercept_with_direction(),
-                Style::default().fg(intercept_color)
-            ),
-            Span::styled("  Az: ", Style::default().fg(Color::Cyan)),
-            Span::styled(
-                format!("{:03.0}° T", lop.azimuth),
-                Style::default().fg(Color::White)
-            ),
-        ]));
 
         // Blank line between sights (except for the last one)
         if i < lop_data.len() - 1 {
@@ -1895,10 +2363,22 @@ mod tests {
 
     #[test]
     fn test_star_name_field_navigation() {
+        // Test 1: For star body, StarName should be included
         let mut form = AutoComputeForm::new();
+        form.current_sight.body = SightCelestialBody::Star("Sirius".to_string());
         form.current_field = SightInputField::Body;
         form.next_field();
-        assert_eq!(form.current_field, SightInputField::StarName);
+        assert_eq!(form.current_field, SightInputField::StarName,
+            "Should navigate to StarName when body is a star");
+
+        // Test 2: For non-star body, StarName should be skipped
+        let mut form2 = AutoComputeForm::new();
+        // Default body is Sun (non-star)
+        assert!(!form2.current_sight.is_star(), "Default body should not be a star");
+        form2.current_field = SightInputField::Body;
+        form2.next_field();
+        assert_eq!(form2.current_field, SightInputField::Date,
+            "Should skip StarName and go to Date when body is not a star");
     }
 
     #[test]
@@ -1907,6 +2387,557 @@ mod tests {
         form.current_sight.body = SightCelestialBody::Star("Vega".to_string());
         let value = form.get_field_value(SightInputField::StarName);
         assert_eq!(value, "Vega");
+    }
+
+    // Tests for Phase 1: New Sight struct fields
+    #[test]
+    fn test_sight_new_has_default_log_heading_active() {
+        let sight = Sight::new();
+        assert_eq!(sight.log_reading, String::new(), "Log reading should default to empty");
+        assert_eq!(sight.heading, String::new(), "Heading should default to empty");
+        assert!(sight.is_active, "Sight should be active by default");
+    }
+
+    #[test]
+    fn test_sight_log_reading_can_be_set() {
+        let mut sight = Sight::new();
+        sight.log_reading = "103.5".to_string();
+        assert_eq!(sight.log_reading, "103.5");
+    }
+
+    #[test]
+    fn test_sight_heading_can_be_set() {
+        let mut sight = Sight::new();
+        sight.heading = "045".to_string();
+        assert_eq!(sight.heading, "045");
+    }
+
+    #[test]
+    fn test_sight_can_be_marked_inactive() {
+        let mut sight = Sight::new();
+        assert!(sight.is_active);
+        sight.is_active = false;
+        assert!(!sight.is_active);
+    }
+
+    #[test]
+    fn test_sight_serialization_with_new_fields() {
+        let mut sight = Sight::new();
+        sight.body = SightCelestialBody::Sun;
+        sight.date = "2024-03-15".to_string();
+        sight.time = "12:00:00".to_string();
+        sight.sextant_altitude = "45 30.0".to_string();
+        sight.log_reading = "103.5".to_string();
+        sight.heading = "045".to_string();
+        sight.is_active = true;
+
+        // Serialize and deserialize
+        let json = serde_json::to_string(&sight).expect("Failed to serialize");
+        let deserialized: Sight = serde_json::from_str(&json).expect("Failed to deserialize");
+
+        assert_eq!(deserialized.log_reading, "103.5");
+        assert_eq!(deserialized.heading, "045");
+        assert!(deserialized.is_active);
+    }
+
+    #[test]
+    fn test_backward_compatibility_old_json_without_new_fields() {
+        // Simulate old JSON file that doesn't have log_reading, heading, or is_active
+        let old_json = r#"{
+            "body": "Sun",
+            "date": "2024-03-15",
+            "time": "12:00:00",
+            "sextant_altitude": "45 30.0",
+            "index_error": "0",
+            "height_of_eye": "10",
+            "dr_latitude": "50 00.0",
+            "dr_longitude": "20 00.0",
+            "lat_direction": "N",
+            "lon_direction": "W"
+        }"#;
+
+        // Should deserialize successfully with default values
+        let sight: Sight = serde_json::from_str(old_json).expect("Failed to deserialize old JSON");
+
+        // Verify defaults are applied
+        assert_eq!(sight.log_reading, "", "log_reading should default to empty string");
+        assert_eq!(sight.heading, "", "heading should default to empty string");
+        assert!(sight.is_active, "is_active should default to true");
+
+        // Verify other fields loaded correctly
+        assert_eq!(sight.date, "2024-03-15");
+        assert_eq!(sight.sextant_altitude, "45 30.0");
+    }
+
+    #[test]
+    fn test_backward_compatibility_partial_new_fields() {
+        // Test that we can load JSON with only some of the new fields
+        let partial_json = r#"{
+            "body": "Moon",
+            "date": "2024-03-15",
+            "time": "12:00:00",
+            "sextant_altitude": "45 30.0",
+            "index_error": "0",
+            "height_of_eye": "10",
+            "dr_latitude": "50 00.0",
+            "dr_longitude": "20 00.0",
+            "lat_direction": "N",
+            "lon_direction": "W",
+            "log_reading": "103.5"
+        }"#;
+
+        let sight: Sight = serde_json::from_str(partial_json).expect("Failed to deserialize partial JSON");
+
+        assert_eq!(sight.log_reading, "103.5");
+        assert_eq!(sight.heading, "", "heading should default to empty");
+        assert!(sight.is_active, "is_active should default to true");
+    }
+
+    // Tests for Phase 2: DR Auto-Calculation
+    #[test]
+    fn test_calculate_dr_from_previous_with_valid_log_and_heading() {
+        let mut form = AutoComputeForm::new();
+
+        // Add first sight with log and heading at 50°N, 20°W
+        let mut sight1 = Sight::new();
+        sight1.body = SightCelestialBody::Sun;
+        sight1.date = "2024-03-15".to_string();
+        sight1.time = "12:00:00".to_string();
+        sight1.sextant_altitude = "45 30.0".to_string();
+        sight1.index_error = "0".to_string();
+        sight1.height_of_eye = "10".to_string();
+        sight1.dr_latitude = "50 00.0".to_string();
+        sight1.dr_longitude = "20 00.0".to_string();
+        sight1.lat_direction = 'N';
+        sight1.lon_direction = 'W';
+        sight1.log_reading = "100.0".to_string();
+        sight1.heading = "045".to_string();  // Northeast
+        form.sights.push(sight1);
+
+        // Set up current sight with new log reading (traveled 5 NM)
+        form.current_sight.log_reading = "105.0".to_string();
+
+        // Calculate DR - should advance 5 NM on heading 045°
+        let dr = form.calculate_dr_from_previous();
+        assert!(dr.is_some(), "DR calculation should succeed");
+
+        let (new_lat, new_lon) = dr.unwrap();
+        // Verify position has moved northeast from 50°N, -20°W
+        assert!(new_lat > 50.0, "Should have moved north, got lat: {}", new_lat);
+        assert!(new_lon > -20.0, "Should have moved east (less negative), got lon: {}", new_lon);
+    }
+
+    #[test]
+    fn test_calculate_dr_from_previous_with_no_previous_sight() {
+        let mut form = AutoComputeForm::new();
+
+        // No previous sight
+        form.current_sight.log_reading = "105.0".to_string();
+
+        let dr = form.calculate_dr_from_previous();
+        assert!(dr.is_none(), "DR should be None when no previous sight");
+    }
+
+    #[test]
+    fn test_calculate_dr_from_previous_with_missing_log() {
+        let mut form = AutoComputeForm::new();
+
+        // Add sight without log reading
+        let mut sight1 = Sight::new();
+        sight1.heading = "045".to_string();
+        sight1.dr_latitude = "50 00.0".to_string();
+        sight1.dr_longitude = "20 00.0".to_string();
+        sight1.lat_direction = 'N';
+        sight1.lon_direction = 'W';
+        form.sights.push(sight1);
+
+        form.current_sight.log_reading = "105.0".to_string();
+
+        let dr = form.calculate_dr_from_previous();
+        assert!(dr.is_none(), "DR should be None when previous sight has no log");
+    }
+
+    #[test]
+    fn test_calculate_dr_from_previous_with_missing_heading() {
+        let mut form = AutoComputeForm::new();
+
+        // Add sight without heading
+        let mut sight1 = Sight::new();
+        sight1.log_reading = "100.0".to_string();
+        sight1.dr_latitude = "50 00.0".to_string();
+        sight1.dr_longitude = "20 00.0".to_string();
+        sight1.lat_direction = 'N';
+        sight1.lon_direction = 'W';
+        form.sights.push(sight1);
+
+        form.current_sight.log_reading = "105.0".to_string();
+
+        let dr = form.calculate_dr_from_previous();
+        assert!(dr.is_none(), "DR should be None when previous sight has no heading");
+    }
+
+    // Tests for Phase 3: Edit Sight Functionality
+    #[test]
+    fn test_edit_sight_loads_sight_into_form() {
+        let mut form = AutoComputeForm::new();
+
+        // Add a sight
+        let mut sight = Sight::new();
+        sight.body = SightCelestialBody::Sun;
+        sight.date = "2024-03-15".to_string();
+        sight.time = "12:00:00".to_string();
+        sight.sextant_altitude = "45 30.0".to_string();
+        sight.log_reading = "100.5".to_string();
+        sight.heading = "045".to_string();
+        form.sights.push(sight);
+
+        // Select the sight and edit it
+        form.selected_sight_index = Some(0);
+        form.edit_selected_sight();
+
+        // Verify sight loaded into current_sight
+        assert_eq!(form.current_sight.body, SightCelestialBody::Sun);
+        assert_eq!(form.current_sight.sextant_altitude, "45 30.0");
+        assert_eq!(form.current_sight.log_reading, "100.5");
+        assert_eq!(form.current_sight.heading, "045");
+
+        // Verify editing state
+        assert_eq!(form.editing_sight_index, Some(0));
+        assert_eq!(form.mode, AutoComputeMode::EnteringSight);
+    }
+
+    #[test]
+    fn test_save_edited_sight_updates_list() {
+        let mut form = AutoComputeForm::new();
+
+        // Add a sight
+        let mut sight = Sight::new();
+        sight.body = SightCelestialBody::Sun;
+        sight.sextant_altitude = "45 30.0".to_string();
+        sight.date = "2024-03-15".to_string();
+        sight.time = "12:00:00".to_string();
+        sight.index_error = "0".to_string();
+        sight.height_of_eye = "10".to_string();
+        sight.dr_latitude = "50 00.0".to_string();
+        sight.dr_longitude = "20 00.0".to_string();
+        sight.lat_direction = 'N';
+        sight.lon_direction = 'W';
+        form.sights.push(sight);
+
+        // Edit it
+        form.selected_sight_index = Some(0);
+        form.edit_selected_sight();
+
+        // Modify the sight
+        form.current_sight.sextant_altitude = "46 00.0".to_string();
+
+        // Save
+        form.save_edited_sight();
+
+        // Verify updated
+        assert_eq!(form.sights[0].sextant_altitude, "46 00.0");
+        assert_eq!(form.mode, AutoComputeMode::ViewingSights);
+        assert_eq!(form.editing_sight_index, None);
+    }
+
+    #[test]
+    fn test_cancel_edit_does_not_save_changes() {
+        let mut form = AutoComputeForm::new();
+
+        // Add a sight
+        let mut sight = Sight::new();
+        sight.sextant_altitude = "45 30.0".to_string();
+        sight.date = "2024-03-15".to_string();
+        sight.time = "12:00:00".to_string();
+        sight.index_error = "0".to_string();
+        sight.height_of_eye = "10".to_string();
+        sight.dr_latitude = "50 00.0".to_string();
+        sight.dr_longitude = "20 00.0".to_string();
+        sight.lat_direction = 'N';
+        sight.lon_direction = 'W';
+        form.sights.push(sight);
+
+        // Edit it
+        form.selected_sight_index = Some(0);
+        form.edit_selected_sight();
+
+        // Modify but cancel
+        form.current_sight.sextant_altitude = "46 00.0".to_string();
+        form.cancel_edit();
+
+        // Verify not updated
+        assert_eq!(form.sights[0].sextant_altitude, "45 30.0");
+        assert_eq!(form.mode, AutoComputeMode::ViewingSights);
+        assert_eq!(form.editing_sight_index, None);
+    }
+
+    #[test]
+    fn test_edit_sight_does_not_add_new_sight() {
+        let mut form = AutoComputeForm::new();
+
+        // Add a sight
+        let mut sight = Sight::new();
+        sight.body = SightCelestialBody::Sun;
+        sight.sextant_altitude = "45 30.0".to_string();
+        sight.date = "2024-03-15".to_string();
+        sight.time = "12:00:00".to_string();
+        sight.index_error = "0".to_string();
+        sight.height_of_eye = "10".to_string();
+        sight.dr_latitude = "50 00.0".to_string();
+        sight.dr_longitude = "20 00.0".to_string();
+        sight.lat_direction = 'N';
+        sight.lon_direction = 'W';
+        form.sights.push(sight);
+
+        let initial_count = form.sights.len();
+        assert_eq!(initial_count, 1, "Should start with 1 sight");
+
+        // Edit it
+        form.selected_sight_index = Some(0);
+        form.edit_selected_sight();
+
+        // Modify the sight
+        form.current_sight.sextant_altitude = "46 00.0".to_string();
+
+        // Save using save_edited_sight (which Enter should call in edit mode)
+        form.save_edited_sight();
+
+        // Verify count hasn't changed (not added as new)
+        assert_eq!(form.sights.len(), 1, "Should still have exactly 1 sight, not 2");
+
+        // Verify the sight was updated
+        assert_eq!(form.sights[0].sextant_altitude, "46 00.0");
+    }
+
+    #[test]
+    fn test_tab_switches_from_viewing_to_entering() {
+        let mut form = AutoComputeForm::new();
+
+        // Start in EnteringSight mode
+        assert_eq!(form.mode, AutoComputeMode::EnteringSight);
+
+        // Switch to ViewingSights
+        form.mode = AutoComputeMode::ViewingSights;
+        assert_eq!(form.mode, AutoComputeMode::ViewingSights);
+
+        // Simulate Tab key - should switch back to EnteringSight
+        use crossterm::event::KeyCode;
+        let tab_event = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
+        form.handle_key_event(tab_event);
+
+        assert_eq!(form.mode, AutoComputeMode::EnteringSight, "Tab should switch from ViewingSights to EnteringSight");
+    }
+
+    #[test]
+    fn test_next_field_skips_star_name_for_non_star_body() {
+        let mut form = AutoComputeForm::new();
+
+        // Set body to Sun (non-star)
+        form.current_sight.body = SightCelestialBody::Sun;
+
+        // Start at Body field
+        form.current_field = SightInputField::Body;
+
+        // Call next_field() - should skip StarName and go to Date
+        form.next_field();
+
+        assert_eq!(form.current_field, SightInputField::Date,
+            "next_field() should skip StarName when body is not a star");
+        assert_ne!(form.current_field, SightInputField::StarName,
+            "Should not stop at StarName for non-star body");
+    }
+
+    #[test]
+    fn test_previous_field_skips_star_name_for_non_star_body() {
+        let mut form = AutoComputeForm::new();
+
+        // Set body to Moon (non-star)
+        form.current_sight.body = SightCelestialBody::Moon;
+
+        // Start at Date field
+        form.current_field = SightInputField::Date;
+
+        // Call previous_field() - should skip StarName and go to Body
+        form.previous_field();
+
+        assert_eq!(form.current_field, SightInputField::Body,
+            "previous_field() should skip StarName when body is not a star");
+        assert_ne!(form.current_field, SightInputField::StarName,
+            "Should not stop at StarName for non-star body");
+    }
+
+    #[test]
+    fn test_next_field_includes_star_name_for_star_body() {
+        let mut form = AutoComputeForm::new();
+
+        // Set body to Star
+        form.current_sight.body = SightCelestialBody::Star("Sirius".to_string());
+
+        // Start at Body field
+        form.current_field = SightInputField::Body;
+
+        // Call next_field() - should go to StarName
+        form.next_field();
+
+        assert_eq!(form.current_field, SightInputField::StarName,
+            "next_field() should include StarName when body is a star");
+    }
+
+    #[test]
+    fn test_previous_field_includes_star_name_for_star_body() {
+        let mut form = AutoComputeForm::new();
+
+        // Set body to Star
+        form.current_sight.body = SightCelestialBody::Star("Vega".to_string());
+
+        // Start at Date field
+        form.current_field = SightInputField::Date;
+
+        // Call previous_field() - should go to StarName
+        form.previous_field();
+
+        assert_eq!(form.current_field, SightInputField::StarName,
+            "previous_field() should include StarName when body is a star");
+    }
+
+    // Tests for Phase 4: Sight Averaging
+    #[test]
+    fn test_averaging_marks_originals_inactive() {
+        let mut form = AutoComputeForm::new();
+
+        // Add two Pollux sights 3 minutes apart
+        let mut sight1 = Sight::new();
+        sight1.body = SightCelestialBody::Star("Pollux".to_string());
+        sight1.date = "2024-03-15".to_string();
+        sight1.time = "12:00:00".to_string();
+        sight1.sextant_altitude = "45 30.0".to_string();
+        sight1.index_error = "0".to_string();
+        sight1.height_of_eye = "10".to_string();
+        sight1.dr_latitude = "50 00.0".to_string();
+        sight1.dr_longitude = "20 00.0".to_string();
+        sight1.lat_direction = 'N';
+        sight1.lon_direction = 'W';
+        form.sights.push(sight1);
+
+        let mut sight2 = Sight::new();
+        sight2.body = SightCelestialBody::Star("Pollux".to_string());
+        sight2.date = "2024-03-15".to_string();
+        sight2.time = "12:03:00".to_string();
+        sight2.sextant_altitude = "45 32.0".to_string();
+        sight2.index_error = "0".to_string();
+        sight2.height_of_eye = "10".to_string();
+        sight2.dr_latitude = "50 00.0".to_string();
+        sight2.dr_longitude = "20 00.0".to_string();
+        sight2.lat_direction = 'N';
+        sight2.lon_direction = 'W';
+        form.sights.push(sight2);
+
+        // Average them
+        form.selected_sight_indices = vec![0, 1];
+        form.multi_select_mode = true;
+        form.average_selected_sights();
+
+        // Verify:
+        // - Total count is 3 (2 original + 1 averaged)
+        assert_eq!(form.sights.len(), 3, "Should have 3 sights total");
+
+        // - Original two are inactive
+        assert!(!form.sights[0].is_active, "First original should be inactive");
+        assert!(!form.sights[1].is_active, "Second original should be inactive");
+
+        // - New averaged sight is active
+        assert!(form.sights[2].is_active, "Averaged sight should be active");
+
+        // - Active count is 1
+        let active_count = form.sights.iter().filter(|s| s.is_active).count();
+        assert_eq!(active_count, 1, "Should have exactly 1 active sight");
+    }
+
+    #[test]
+    fn test_cannot_average_different_bodies() {
+        let mut form = AutoComputeForm::new();
+
+        let mut sight1 = Sight::new();
+        sight1.body = SightCelestialBody::Sun;
+        sight1.date = "2024-03-15".to_string();
+        sight1.time = "12:00:00".to_string();
+        sight1.sextant_altitude = "45 30.0".to_string();
+        form.sights.push(sight1);
+
+        let mut sight2 = Sight::new();
+        sight2.body = SightCelestialBody::Moon;
+        sight2.date = "2024-03-15".to_string();
+        sight2.time = "12:01:00".to_string();
+        sight2.sextant_altitude = "45 32.0".to_string();
+        form.sights.push(sight2);
+
+        form.selected_sight_indices = vec![0, 1];
+        let result = form.can_average_sights(&form.selected_sight_indices);
+        assert!(result.is_err(), "Should not allow averaging different bodies");
+        assert!(result.unwrap_err().contains("same celestial body"));
+    }
+
+    #[test]
+    fn test_cannot_average_beyond_5_minutes() {
+        let mut form = AutoComputeForm::new();
+
+        let mut sight1 = Sight::new();
+        sight1.body = SightCelestialBody::Sun;
+        sight1.date = "2024-03-15".to_string();
+        sight1.time = "12:00:00".to_string();
+        sight1.sextant_altitude = "45 30.0".to_string();
+        form.sights.push(sight1);
+
+        let mut sight2 = Sight::new();
+        sight2.body = SightCelestialBody::Sun;
+        sight2.date = "2024-03-15".to_string();
+        sight2.time = "12:06:00".to_string();  // 6 minutes apart
+        sight2.sextant_altitude = "45 32.0".to_string();
+        form.sights.push(sight2);
+
+        form.selected_sight_indices = vec![0, 1];
+        let result = form.can_average_sights(&form.selected_sight_indices);
+        assert!(result.is_err(), "Should not allow averaging sights > 5 min apart");
+        assert!(result.unwrap_err().contains("within 5 minutes"));
+    }
+
+    #[test]
+    fn test_can_average_same_body_within_5_minutes() {
+        let mut form = AutoComputeForm::new();
+
+        let mut sight1 = Sight::new();
+        sight1.body = SightCelestialBody::Star("Pollux".to_string());
+        sight1.date = "2024-03-15".to_string();
+        sight1.time = "12:00:00".to_string();
+        sight1.sextant_altitude = "45 30.0".to_string();
+        form.sights.push(sight1);
+
+        let mut sight2 = Sight::new();
+        sight2.body = SightCelestialBody::Star("Pollux".to_string());
+        sight2.date = "2024-03-15".to_string();
+        sight2.time = "12:04:30".to_string();  // 4.5 minutes apart
+        sight2.sextant_altitude = "45 32.0".to_string();
+        form.sights.push(sight2);
+
+        form.selected_sight_indices = vec![0, 1];
+        let result = form.can_average_sights(&form.selected_sight_indices);
+        assert!(result.is_ok(), "Should allow averaging same body within 5 min");
+    }
+
+    #[test]
+    fn test_cannot_average_less_than_2_sights() {
+        let mut form = AutoComputeForm::new();
+
+        let mut sight1 = Sight::new();
+        sight1.body = SightCelestialBody::Sun;
+        sight1.date = "2024-03-15".to_string();
+        sight1.time = "12:00:00".to_string();
+        form.sights.push(sight1);
+
+        form.selected_sight_indices = vec![0];
+        let result = form.can_average_sights(&form.selected_sight_indices);
+        assert!(result.is_err(), "Should need at least 2 sights");
+        assert!(result.unwrap_err().contains("at least 2"));
     }
 
     #[test]
@@ -2876,6 +3907,7 @@ mod tests {
             chosen_lat: 45.5,
             chosen_lon: -123.25,
             ho: 35.5,
+            declination: -16.717,
             gha: 245.62,
             lha: 122.0,
             gha_aries: Some(10.0),
@@ -2905,6 +3937,7 @@ mod tests {
             chosen_lat: 40.0,
             chosen_lon: -74.0,
             ho: 42.15,
+            declination: 15.5,
             gha: 180.5,
             lha: 106.0,
             gha_aries: None,
@@ -2927,6 +3960,7 @@ mod tests {
             chosen_lat: 40.0,
             chosen_lon: -74.0,
             ho: 27.72,
+            declination: -10.5,
             gha: 215.33,
             lha: 141.0,
             gha_aries: None,
@@ -2949,6 +3983,7 @@ mod tests {
             chosen_lat: 40.0,
             chosen_lon: -74.0,
             ho: 30.0,
+            declination: 8.2,
             gha: 95.25,
             lha: 21.0,
             gha_aries: None,
@@ -2980,6 +4015,7 @@ mod tests {
             chosen_lat: 40.0,
             chosen_lon: -74.0,
             ho: 42.15,
+            declination: 15.5,
             gha: 180.5,
             lha: 106.0,
             gha_aries: None,
@@ -3016,6 +4052,9 @@ mod tests {
             dr_longitude: "123 15.0".to_string(),
             lat_direction: 'N',
             lon_direction: 'W',
+            log_reading: String::new(),
+            heading: String::new(),
+            is_active: true,
         };
 
         let sight2 = Sight {
@@ -3029,6 +4068,9 @@ mod tests {
             dr_longitude: "123 15.0".to_string(),
             lat_direction: 'N',
             lon_direction: 'W',
+            log_reading: String::new(),
+            heading: String::new(),
+            is_active: true,
         };
 
         form.sights.push(sight1);
@@ -3069,6 +4111,7 @@ mod tests {
             chosen_lat: 50.0,
             chosen_lon: -5.0,
             ho: 45.6,
+            declination: 19.183,
             gha: 180.25,
             lha: 175.0,
             gha_aries: None,
@@ -3099,6 +4142,7 @@ mod tests {
             chosen_lat: 45.0,
             chosen_lon: -123.0,
             ho: 35.1,
+            declination: 15.0,
             gha: 180.0,
             lha: 57.0,
             gha_aries: None,
@@ -3128,6 +4172,7 @@ mod tests {
             chosen_lat: 45.0,
             chosen_lon: -123.0,
             ho: 35.1,
+            declination: 15.0,
             gha: 180.0,
             lha: 57.0,
             gha_aries: None,
@@ -3157,6 +4202,7 @@ mod tests {
             chosen_lat: 45.0,
             chosen_lon: -123.0,
             ho: 35.1,
+            declination: 15.5,
             gha: 180.0,
             lha: 57.0,
             gha_aries: None,
@@ -3193,6 +4239,9 @@ mod tests {
             dr_longitude: "123 15.0".to_string(), // 123° 15.0' = 123.25°
             lat_direction: 'N',
             lon_direction: 'W',
+            log_reading: String::new(),
+            heading: String::new(),
+            is_active: true,
         };
 
         // Add the sight
@@ -3223,6 +4272,7 @@ mod tests {
             chosen_lat: 46.0,
             chosen_lon: -123.62,
             ho: 35.42,           // Observed altitude after corrections
+            declination: 15.5,
             gha: 245.62,         // Greenwich Hour Angle
             lha: 122.0,          // Local Hour Angle (can have decimal values)
             gha_aries: None,
@@ -3275,11 +4325,12 @@ mod tests {
                 chosen_lat: 45.0,
                 chosen_lon,
                 ho: 35.0,
+                declination: 15.0,
                 gha,
                 lha: expected_lha,
                 gha_aries: None,
-            pub249_chosen_lat: None,
-            pub249_chosen_lon: None,
+                pub249_chosen_lat: None,
+                pub249_chosen_lon: None,
                 lha_aries: None,
                 hc: 35.0,
                 intercept: 0.0,

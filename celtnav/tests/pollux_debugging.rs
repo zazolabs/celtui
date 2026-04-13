@@ -28,7 +28,7 @@ fn test_pollux_eastern_observation() {
     println!("LHA:         {:05.1}°", sight.local_hour_angle);
     println!("---");
     println!("Hc:          {:.2}° ({:02}° {:02.0}')", hc, hc.floor() as i32, (hc.fract() * 60.0));
-    println!("Zn:          {:.0}° T (East-Southeast)", zn);
+    println!("Zn:          {:.0}° T (West)", zn);
     println!("===\n");
 
     // Verify this matches user's EXPECTED values
@@ -39,8 +39,8 @@ fn test_pollux_eastern_observation() {
     );
 
     assert!(
-        (zn - 104.0).abs() < 10.0,
-        "Azimuth should be ~104° (ESE), got {:.0}°",
+        (zn - 265.0).abs() < 10.0,
+        "Azimuth should be ~265° (W), got {:.0}°",
         zn
     );
 }
@@ -66,7 +66,7 @@ fn test_pollux_western_observation() {
     println!("LHA:         {:05.1}°", sight.local_hour_angle);
     println!("---");
     println!("Hc:          {:.2}° ({:02}° {:02.0}')", hc, hc.floor() as i32, (hc.fract() * 60.0));
-    println!("Zn:          {:.0}° T (West-Southwest)", zn);
+    println!("Zn:          {:.0}° T (East)", zn);
     println!("===\n");
 
     // Verify this matches what user is GETTING
@@ -77,8 +77,8 @@ fn test_pollux_western_observation() {
     );
 
     assert!(
-        (zn - 265.0).abs() < 10.0,
-        "Azimuth should be ~265° (WSW), got {:.0}°",
+        (zn - 95.0).abs() < 10.0,
+        "Azimuth should be ~95° (E), got {:.0}°",
         zn
     );
 }

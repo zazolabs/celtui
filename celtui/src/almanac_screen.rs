@@ -878,7 +878,7 @@ mod tests {
     #[test]
     fn test_almanac_form_has_star_catalog() {
         let form = AlmanacForm::new();
-        assert_eq!(form.star_catalog.len(), 58);
+        assert_eq!(form.star_catalog.len(), 63);
         assert!(!form.star_name.is_empty());
     }
 
@@ -986,8 +986,8 @@ mod tests {
         let mut form = AlmanacForm::new();
         form.star_name = String::new();
         let matches = form.filter_stars();
-        // Should return all 58 stars when input is empty
-        assert_eq!(matches.len(), 58);
+        // Should return all 63 stars when input is empty
+        assert_eq!(matches.len(), 63);
     }
 
     #[test]

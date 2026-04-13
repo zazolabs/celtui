@@ -117,10 +117,10 @@ fn test_compute_azimuth_pub229() {
 
     let zn = compute_azimuth(&sight_data);
 
-    // LHA = 30° means body is east of meridian
-    // Azimuth should be between 90° and 180° (southeast quadrant)
-    assert!(zn > 90.0 && zn < 180.0,
-            "Azimuth should be in southeast quadrant, got {}", zn);
+    // LHA = 30°, latitude 40°N, declination 20°N
+    // Azimuth should be between 180° and 270° (southwest quadrant)
+    assert!(zn > 180.0 && zn < 270.0,
+            "Azimuth should be in southwest quadrant, got {}", zn);
 }
 
 /// Test azimuth on meridian (south)
@@ -140,9 +140,9 @@ fn test_compute_azimuth_meridian_south() {
     assert_relative_eq!(zn, 180.0, epsilon = 0.1);
 }
 
-/// Test azimuth due east
+/// Test azimuth with LHA = 90° at equator
 ///
-/// When LHA = 90°, body should be near east (90°)
+/// With our azimuth conversion, this gives 270° (west)
 #[test]
 fn test_compute_azimuth_east() {
     let sight_data = SightData {
@@ -153,12 +153,12 @@ fn test_compute_azimuth_east() {
 
     let zn = compute_azimuth(&sight_data);
 
-    assert_relative_eq!(zn, 90.0, epsilon = 0.1);
+    assert_relative_eq!(zn, 270.0, epsilon = 0.1);
 }
 
-/// Test azimuth due west
+/// Test azimuth with LHA = 270° at equator
 ///
-/// When LHA = 270°, body should be near west (270°)
+/// With our azimuth conversion, this gives 90° (east)
 #[test]
 fn test_compute_azimuth_west() {
     let sight_data = SightData {
@@ -169,7 +169,7 @@ fn test_compute_azimuth_west() {
 
     let zn = compute_azimuth(&sight_data);
 
-    assert_relative_eq!(zn, 270.0, epsilon = 0.1);
+    assert_relative_eq!(zn, 90.0, epsilon = 0.1);
 }
 
 /// Test intercept calculation (toward)

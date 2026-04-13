@@ -10,6 +10,7 @@ pub mod sight_reduction;
 pub mod almanac;
 pub mod fix_calculation;
 pub mod sight_averaging;
+pub mod twilight;
 
 pub use time_conversion::{gha_from_utc, lha_from_gha, gst_from_utc};
 pub use coords::{equatorial_to_horizontal, horizontal_to_equatorial, EquatorialCoords, HorizontalCoords};
@@ -35,3 +36,11 @@ pub use sight_averaging::{
     average_sights, validate_altitude,
 };
 pub use dms::{decimal_to_dms, dms_to_decimal, dm_to_decimal, DMS};
+pub use twilight::{
+    calculate_twilight_times, get_visible_stars, get_visible_planets,
+    get_all_visible_bodies, get_all_visible_bodies_interval,
+    TwilightTimes, VisibleBody,
+    NAUTICAL_TWILIGHT_ANGLE, CIVIL_TWILIGHT_ANGLE,
+    MIN_SEXTANT_ALTITUDE, MAX_SEXTANT_ALTITUDE,
+    OPTIMAL_MIN_ALTITUDE, OPTIMAL_MAX_ALTITUDE,
+};
