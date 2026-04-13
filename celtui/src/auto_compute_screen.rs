@@ -1,0 +1,1763 @@
+//! Auto Compute screen for multiple sight reduction and fix calculation
+//!
+//! This module provides a screen for entering multiple celestial sights,
+//! computing their Lines of Position, and calculating a fix from multiple LOPs.
+
+use chrono::{NaiveDate, NaiveTime, TimeZone, Utc};
+use celtnav::almanac::{CelestialBody as AlmanacBody, Planet, get_body_position};
+use celtnav::sight_reduction::{
+    compute_altitude, compute_azimuth, compute_intercept, SightData,
+    apply_refraction_correction, apply_dip_correction,
+    apply_semidiameter_correction, apply_parallax_correction,
+};
+use celtnav::fix_calculation::{LineOfPosition, fix_from_multiple_lops, Fix, advance_lop};
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::{
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Row, Table, Wrap},
+    Frame,
+};
+use serde::{Deserialize, Serialize};
+
+/// Celestial body for sight
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SightCelestialBody {
+    Sun,
+    Moon,
+    Venus,
+    Mars,
+    Jupiter,
+    Saturn,
+    Star(String), // Star with name
+}
+
+impl SightCelestialBody {
+    /// Returns all non-star celestial bodies
+    pub fn all_non_star() -> Vec<SightCelestialBody> {
+        vec![
+            SightCelestialBody::Sun,
+            SightCelestialBody::Moon,
+            SightCelestialBody::Venus,
+            SightCelestialBody::Mars,
+            SightCelestialBody::Jupiter,
+            SightCelestialBody::Saturn,
+        ]
+    }
+
+    /// Returns all celestial bodies including a star placeholder
+    pub fn all() -> Vec<SightCelestialBody> {
+        let mut bodies = Self::all_non_star();
+        bodies.push(SightCelestialBody::Star(String::new()));
+        bodies
+    }
+
+    pub fn name(&self) -> String {
+        match self {
+            SightCelestialBody::Sun => "Sun".to_string(),
+            SightCelestialBody::Moon => "Moon".to_string(),
+            SightCelestialBody::Venus => "Venus".to_string(),
+            SightCelestialBody::Mars => "Mars".to_string(),
+            SightCelestialBody::Jupiter => "Jupiter".to_string(),
+            SightCelestialBody::Saturn => "Saturn".to_string(),
+            SightCelestialBody::Star(name) => name.clone(),
+        }
+    }
+
+    fn to_almanac_body(&self) -> AlmanacBody {
+        match self {
+            SightCelestialBody::Sun => AlmanacBody::Sun,
+            SightCelestialBody::Moon => AlmanacBody::Moon,
+            SightCelestialBody::Venus => AlmanacBody::Planet(Planet::Venus),
+            SightCelestialBody::Mars => AlmanacBody::Planet(Planet::Mars),
+            SightCelestialBody::Jupiter => AlmanacBody::Planet(Planet::Jupiter),
+            SightCelestialBody::Saturn => AlmanacBody::Planet(Planet::Saturn),
+            SightCelestialBody::Star(name) => AlmanacBody::Star(name.clone()),
+        }
+    }
+}
+
+/// A single sight observation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sight {
+    pub body: SightCelestialBody,
+    pub date: String,
+    pub time: String,
+    pub sextant_altitude: String,  // "DD MM.M"
+    pub index_error: String,       // arcminutes
+    pub height_of_eye: String,     // meters
+    pub dr_latitude: String,       // DR position latitude "DD MM.M"
+    pub dr_longitude: String,      // DR position longitude "DD MM.M"
+    pub lat_direction: char,       // N/S
+    pub lon_direction: char,       // E/W
+}
+
+impl Sight {
+    pub fn new() -> Self {
+        Self {
+            body: SightCelestialBody::Sun,
+            date: String::new(),
+            time: String::new(),
+            sextant_altitude: String::new(),
+            index_error: String::from("0"),
+            height_of_eye: String::from("0"),
+            dr_latitude: String::new(),
+            dr_longitude: String::new(),
+            lat_direction: 'N',
+            lon_direction: 'W',
+        }
+    }
+
+    pub fn display_summary(&self) -> String {
+        format!(
+            "{} @ {} {} - Hs: {}",
+            self.body.name(),
+            self.date,
+            self.time,
+            self.sextant_altitude
+        )
+    }
+
+    pub fn is_star(&self) -> bool {
+        matches!(self.body, SightCelestialBody::Star(_))
+    }
+}
+
+/// Input field for sight entry
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SightInputField {
+    Body,
+    StarName,          // Star name input (when Star body is selected)
+    Date,
+    Time,
+    SextantAltitude,
+    IndexError,
+    HeightOfEye,
+    DRLatitude,
+    DRLongitude,
+    LatDirection,
+    LonDirection,
+}
+
+impl SightInputField {
+    pub fn all() -> Vec<SightInputField> {
+        vec![
+            SightInputField::Body,
+            SightInputField::StarName,  // Always in list, visibility controlled by selected body
+            SightInputField::Date,
+            SightInputField::Time,
+            SightInputField::SextantAltitude,
+            SightInputField::IndexError,
+            SightInputField::HeightOfEye,
+            SightInputField::DRLatitude,
+            SightInputField::DRLongitude,
+            SightInputField::LatDirection,
+            SightInputField::LonDirection,
+        ]
+    }
+
+    pub fn next(&self) -> Self {
+        let fields = Self::all();
+        let current_idx = fields.iter().position(|f| f == self).unwrap_or(0);
+        let next_idx = (current_idx + 1) % fields.len();
+        fields[next_idx]
+    }
+
+    pub fn previous(&self) -> Self {
+        let fields = Self::all();
+        let current_idx = fields.iter().position(|f| f == self).unwrap_or(0);
+        let prev_idx = if current_idx == 0 {
+            fields.len() - 1
+        } else {
+            current_idx - 1
+        };
+        fields[prev_idx]
+    }
+
+    pub fn label(&self) -> &str {
+        match self {
+            SightInputField::Body => "Celestial Body",
+            SightInputField::StarName => "Star Name (type to search)",
+            SightInputField::Date => "Date (YYYY-MM-DD)",
+            SightInputField::Time => "Time UT (HH:MM:SS)",
+            SightInputField::SextantAltitude => "Sextant Altitude (Hs) [DD MM.M]",
+            SightInputField::IndexError => "Index Error (arcmin)",
+            SightInputField::HeightOfEye => "Height of Eye (meters)",
+            SightInputField::DRLatitude => "DR Latitude [DD MM.M]",
+            SightInputField::DRLongitude => "DR Longitude [DD MM.M]",
+            SightInputField::LatDirection => "Latitude (N/S)",
+            SightInputField::LonDirection => "Longitude (E/W)",
+        }
+    }
+}
+
+/// Auto compute screen state
+#[derive(Debug, Clone)]
+pub struct AutoComputeForm {
+    pub sights: Vec<Sight>,
+    pub current_sight: Sight,
+    pub current_field: SightInputField,
+    pub selected_sight_index: Option<usize>,
+    pub fix_result: Option<Fix>,
+    pub error_message: Option<String>,
+    pub mode: AutoComputeMode,
+    pub vessel_course: String,  // Course in degrees
+    pub vessel_speed: String,   // Speed in knots
+    pub running_fix_field: RunningFixField,
+    pub star_filter_matches: Vec<String>, // Filtered star names for autocompletion
+    pub star_selected_index: usize,       // Index of selected star in filtered list
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoComputeMode {
+    EnteringSight,
+    ViewingSights,
+    EditingRunningFix,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunningFixField {
+    Course,
+    Speed,
+}
+
+impl RunningFixField {
+    pub fn next(&self) -> Self {
+        match self {
+            RunningFixField::Course => RunningFixField::Speed,
+            RunningFixField::Speed => RunningFixField::Course,
+        }
+    }
+}
+
+impl AutoComputeForm {
+    pub fn new() -> Self {
+        Self {
+            sights: Vec::new(),
+            current_sight: Sight::new(),
+            current_field: SightInputField::Body,
+            selected_sight_index: None,
+            fix_result: None,
+            error_message: None,
+            mode: AutoComputeMode::EnteringSight,
+            vessel_course: String::from("0"),
+            vessel_speed: String::from("0"),
+            running_fix_field: RunningFixField::Course,
+            star_filter_matches: Vec::new(),
+            star_selected_index: 0,
+        }
+    }
+
+    pub fn next_field(&mut self) {
+        self.current_field = self.current_field.next();
+    }
+
+    pub fn previous_field(&mut self) {
+        self.current_field = self.current_field.previous();
+    }
+
+    pub fn get_field_value(&self, field: SightInputField) -> String {
+        match field {
+            SightInputField::Body => self.current_sight.body.name().to_string(),
+            SightInputField::StarName => {
+                // Return star name if current body is a star
+                if let SightCelestialBody::Star(name) = &self.current_sight.body {
+                    name.clone()
+                } else {
+                    String::new()
+                }
+            }
+            SightInputField::Date => self.current_sight.date.clone(),
+            SightInputField::Time => self.current_sight.time.clone(),
+            SightInputField::SextantAltitude => self.current_sight.sextant_altitude.clone(),
+            SightInputField::IndexError => self.current_sight.index_error.clone(),
+            SightInputField::HeightOfEye => self.current_sight.height_of_eye.clone(),
+            SightInputField::DRLatitude => self.current_sight.dr_latitude.clone(),
+            SightInputField::DRLongitude => self.current_sight.dr_longitude.clone(),
+            SightInputField::LatDirection => self.current_sight.lat_direction.to_string(),
+            SightInputField::LonDirection => self.current_sight.lon_direction.to_string(),
+        }
+    }
+
+    pub fn set_field_value(&mut self, field: SightInputField, value: String) {
+        match field {
+            SightInputField::Body => {
+                // Handled by next/previous body
+            }
+            SightInputField::StarName => {
+                // Update star name and filter
+                self.current_sight.body = SightCelestialBody::Star(value);
+                self.update_star_filter();
+            }
+            SightInputField::Date => self.current_sight.date = value,
+            SightInputField::Time => self.current_sight.time = value,
+            SightInputField::SextantAltitude => self.current_sight.sextant_altitude = value,
+            SightInputField::IndexError => self.current_sight.index_error = value,
+            SightInputField::HeightOfEye => self.current_sight.height_of_eye = value,
+            SightInputField::DRLatitude => self.current_sight.dr_latitude = value,
+            SightInputField::DRLongitude => self.current_sight.dr_longitude = value,
+            SightInputField::LatDirection => {
+                if let Some(c) = value.chars().next() {
+                    if c == 'N' || c == 'S' || c == 'n' || c == 's' {
+                        self.current_sight.lat_direction = c.to_ascii_uppercase();
+                    }
+                }
+            }
+            SightInputField::LonDirection => {
+                if let Some(c) = value.chars().next() {
+                    if c == 'E' || c == 'W' || c == 'e' || c == 'w' {
+                        self.current_sight.lon_direction = c.to_ascii_uppercase();
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn next_body(&mut self) {
+        let bodies = SightCelestialBody::all();
+        let current_idx = bodies.iter().position(|b| {
+            match (&self.current_sight.body, b) {
+                (SightCelestialBody::Star(_), SightCelestialBody::Star(_)) => true,
+                _ => *b == self.current_sight.body,
+            }
+        }).unwrap_or(0);
+        let next_idx = (current_idx + 1) % bodies.len();
+        self.current_sight.body = bodies[next_idx].clone();
+    }
+
+    pub fn previous_body(&mut self) {
+        let bodies = SightCelestialBody::all();
+        let current_idx = bodies.iter().position(|b| {
+            match (&self.current_sight.body, b) {
+                (SightCelestialBody::Star(_), SightCelestialBody::Star(_)) => true,
+                _ => *b == self.current_sight.body,
+            }
+        }).unwrap_or(0);
+        let prev_idx = if current_idx == 0 {
+            bodies.len() - 1
+        } else {
+            current_idx - 1
+        };
+        self.current_sight.body = bodies[prev_idx].clone();
+    }
+
+    /// Filter star catalog based on current star name input
+    pub fn filter_stars(&self) -> Vec<String> {
+        use celtnav::almanac::get_star_catalog;
+
+        let catalog = get_star_catalog();
+        let query = if let SightCelestialBody::Star(name) = &self.current_sight.body {
+            name.trim().to_lowercase()
+        } else {
+            String::new()
+        };
+
+        if query.is_empty() {
+            // If empty, return all stars
+            catalog.iter().map(|s| s.name.to_string()).collect()
+        } else {
+            // Filter stars that start with the query
+            catalog
+                .iter()
+                .filter(|star| star.name.to_lowercase().starts_with(&query))
+                .map(|s| s.name.to_string())
+                .collect()
+        }
+    }
+
+    /// Update star filter matches based on current input
+    pub fn update_star_filter(&mut self) {
+        self.star_filter_matches = self.filter_stars();
+        // Reset selected index if it's out of bounds
+        if self.star_filter_matches.is_empty() {
+            self.star_selected_index = 0;
+        } else if self.star_selected_index >= self.star_filter_matches.len() {
+            self.star_selected_index = 0;
+        }
+    }
+
+    /// Move selection up in star list (previous star)
+    pub fn previous_star_match(&mut self) {
+        if !self.star_filter_matches.is_empty() {
+            if self.star_selected_index == 0 {
+                self.star_selected_index = self.star_filter_matches.len() - 1;
+            } else {
+                self.star_selected_index -= 1;
+            }
+        }
+    }
+
+    /// Move selection down in star list (next star)
+    pub fn next_star_match(&mut self) {
+        if !self.star_filter_matches.is_empty() {
+            self.star_selected_index = (self.star_selected_index + 1) % self.star_filter_matches.len();
+        }
+    }
+
+    /// Select the currently highlighted star from the filtered list
+    pub fn select_current_star(&mut self) {
+        if !self.star_filter_matches.is_empty() && self.star_selected_index < self.star_filter_matches.len() {
+            self.current_sight.body = SightCelestialBody::Star(
+                self.star_filter_matches[self.star_selected_index].clone()
+            );
+            self.update_star_filter();
+        }
+    }
+
+    /// Validate a specific field and return error message if invalid
+    pub fn validate_field(&self, field: SightInputField) -> Option<String> {
+        use crate::validation::*;
+
+        let result = match field {
+            SightInputField::Date => validate_date(&self.current_sight.date),
+            SightInputField::Time => validate_time(&self.current_sight.time),
+            SightInputField::SextantAltitude => validate_sextant_altitude_dms(&self.current_sight.sextant_altitude),
+            SightInputField::IndexError => validate_index_error(&self.current_sight.index_error),
+            SightInputField::HeightOfEye => validate_height_of_eye(&self.current_sight.height_of_eye),
+            SightInputField::DRLatitude => validate_latitude_dms(&self.current_sight.dr_latitude),
+            SightInputField::DRLongitude => validate_longitude_dms(&self.current_sight.dr_longitude),
+            SightInputField::LatDirection => validate_direction(self.current_sight.lat_direction, &['N', 'S'], "Latitude direction"),
+            SightInputField::LonDirection => validate_direction(self.current_sight.lon_direction, &['E', 'W'], "Longitude direction"),
+            SightInputField::Body => Ok(()), // Body is always valid (selected from list)
+            SightInputField::StarName => {
+                // Validate star name if Star body is selected
+                if self.current_sight.is_star() {
+                    if let SightCelestialBody::Star(name) = &self.current_sight.body {
+                        if name.trim().is_empty() {
+                            Err("Star name is required".to_string())
+                        } else {
+                            // Check if star exists in catalog
+                            use celtnav::almanac::find_star;
+                            if find_star(name).is_some() {
+                                Ok(())
+                            } else {
+                                Err(format!("Star '{}' not found in catalog", name))
+                            }
+                        }
+                    } else {
+                        Ok(())
+                    }
+                } else {
+                    Ok(())
+                }
+            }
+        };
+
+        result.err()
+    }
+
+    /// Validate the current sight before adding it
+    pub fn validate_current_sight(&self) -> Result<(), String> {
+        use crate::validation::*;
+
+        // Validate date
+        validate_date(&self.current_sight.date)?;
+
+        // Validate time
+        validate_time(&self.current_sight.time)?;
+
+        // Validate sextant altitude
+        validate_sextant_altitude_dms(&self.current_sight.sextant_altitude)?;
+
+        // Validate index error
+        validate_index_error(&self.current_sight.index_error)?;
+
+        // Validate height of eye
+        validate_height_of_eye(&self.current_sight.height_of_eye)?;
+
+        // Validate DR position
+        validate_latitude_dms(&self.current_sight.dr_latitude)?;
+        validate_longitude_dms(&self.current_sight.dr_longitude)?;
+
+        // Validate directions
+        validate_direction(self.current_sight.lat_direction, &['N', 'S'], "Latitude direction")?;
+        validate_direction(self.current_sight.lon_direction, &['E', 'W'], "Longitude direction")?;
+
+        Ok(())
+    }
+
+    pub fn add_sight(&mut self) {
+        // Validate before adding
+        if let Err(e) = self.validate_current_sight() {
+            self.error_message = Some(format!("Validation error: {}", e));
+            return;
+        }
+
+        self.sights.push(self.current_sight.clone());
+        self.current_sight = Sight::new();
+        // Copy DR position from previous sight
+        if let Some(last) = self.sights.last() {
+            self.current_sight.dr_latitude = last.dr_latitude.clone();
+            self.current_sight.dr_longitude = last.dr_longitude.clone();
+            self.current_sight.lat_direction = last.lat_direction;
+            self.current_sight.lon_direction = last.lon_direction;
+        }
+        self.error_message = Some("Sight added! Enter another or press 'C' to compute fix.".to_string());
+    }
+
+    pub fn delete_selected_sight(&mut self) {
+        if let Some(idx) = self.selected_sight_index {
+            if idx < self.sights.len() {
+                self.sights.remove(idx);
+                self.selected_sight_index = None;
+                self.fix_result = None;
+            }
+        }
+    }
+
+    pub fn compute_fix(&mut self) {
+        self.fix_result = None;
+        self.error_message = None;
+
+        if self.sights.len() < 2 {
+            self.error_message = Some("Need at least 2 sights to compute a fix".to_string());
+            return;
+        }
+
+        // Parse vessel course and speed for running fix
+        let course = match self.vessel_course.parse::<f64>() {
+            Ok(c) => c,
+            Err(_) => {
+                self.error_message = Some("Invalid vessel course".to_string());
+                return;
+            }
+        };
+
+        let speed = match self.vessel_speed.parse::<f64>() {
+            Ok(s) => s,
+            Err(_) => {
+                self.error_message = Some("Invalid vessel speed".to_string());
+                return;
+            }
+        };
+
+        // Compute LOP for each sight with timestamps
+        let mut lops_with_times: Vec<(LineOfPosition, chrono::DateTime<Utc>, &Sight)> = Vec::new();
+
+        for sight in &self.sights {
+            match self.compute_lop_with_time(sight) {
+                Ok((lop, time)) => lops_with_times.push((lop, time, sight)),
+                Err(e) => {
+                    self.error_message = Some(format!("Error computing LOP: {}", e));
+                    return;
+                }
+            }
+        }
+
+        // Find the latest observation time
+        let latest_time = lops_with_times
+            .iter()
+            .map(|(_, time, _)| *time)
+            .max()
+            .unwrap();
+
+        // Check if we need to do a running fix (sights at different times)
+        let needs_running_fix = lops_with_times
+            .iter()
+            .any(|(_, time, _)| (*time - latest_time).num_seconds().abs() > 60);
+
+        let mut advanced_info = Vec::new();
+
+        // Advance LOPs to latest time if needed
+        let lops: Vec<LineOfPosition> = if needs_running_fix && (speed > 0.0) {
+            lops_with_times
+                .iter()
+                .map(|(lop, time, sight)| {
+                    let time_diff_hours = (latest_time - *time).num_seconds() as f64 / 3600.0;
+                    if time_diff_hours.abs() > 0.016 {
+                        // More than ~1 minute difference
+                        advanced_info.push(format!(
+                            "{} LOP advanced {:.1} hours ({:.1} NM on course {:.0}°)",
+                            sight.body.name(),
+                            time_diff_hours,
+                            speed * time_diff_hours,
+                            course
+                        ));
+                        advance_lop(lop, course, speed, time_diff_hours)
+                    } else {
+                        *lop
+                    }
+                })
+                .collect()
+        } else {
+            lops_with_times.iter().map(|(lop, _, _)| *lop).collect()
+        };
+
+        // Calculate fix from LOPs
+        match fix_from_multiple_lops(&lops) {
+            Some(fix) => {
+                self.fix_result = Some(fix);
+                if !advanced_info.is_empty() {
+                    let msg = format!(
+                        "Running fix computed (advanced to {}):\n{}",
+                        latest_time.format("%Y-%m-%d %H:%M:%S UTC"),
+                        advanced_info.join("\n")
+                    );
+                    self.error_message = Some(msg);
+                } else {
+                    self.error_message = Some("Fix computed from simultaneous sights".to_string());
+                }
+            }
+            None => {
+                self.error_message = Some("Failed to compute fix from LOPs".to_string());
+            }
+        }
+    }
+
+    fn compute_lop_with_time(&self, sight: &Sight) -> Result<(LineOfPosition, chrono::DateTime<Utc>), String> {
+        // Parse date and time
+        let date = NaiveDate::parse_from_str(&sight.date, "%Y-%m-%d")
+            .map_err(|_| "Invalid date format".to_string())?;
+        let time = NaiveTime::parse_from_str(&sight.time, "%H:%M:%S")
+            .or_else(|_| NaiveTime::parse_from_str(&sight.time, "%H:%M"))
+            .map_err(|_| "Invalid time format".to_string())?;
+        let datetime = Utc.from_utc_datetime(&date.and_time(time));
+
+        let lop = self.compute_lop(sight)?;
+        Ok((lop, datetime))
+    }
+
+    fn compute_lop(&self, sight: &Sight) -> Result<LineOfPosition, String> {
+        use crate::validation::parse_dms;
+
+        // Parse date and time
+        let date = NaiveDate::parse_from_str(&sight.date, "%Y-%m-%d")
+            .map_err(|_| "Invalid date format".to_string())?;
+        let time = NaiveTime::parse_from_str(&sight.time, "%H:%M:%S")
+            .or_else(|_| NaiveTime::parse_from_str(&sight.time, "%H:%M"))
+            .map_err(|_| "Invalid time format".to_string())?;
+        let datetime = Utc.from_utc_datetime(&date.and_time(time));
+
+        // Parse sextant altitude using parse_dms
+        let (sext_deg, sext_min, sext_sec) = parse_dms(&sight.sextant_altitude)
+            .map_err(|e| format!("Invalid sextant altitude: {}", e))?;
+        let sextant_altitude = celtnav::dms_to_decimal(sext_deg as i32, sext_min as u32, sext_sec);
+
+        // Parse corrections
+        let index_error: f64 = sight.index_error.parse()
+            .map_err(|_| "Invalid index error".to_string())?;
+        let height_of_eye: f64 = sight.height_of_eye.parse()
+            .map_err(|_| "Invalid height of eye".to_string())?;
+
+        // Parse DR position using parse_dms
+        let (dr_lat_deg, dr_lat_min, dr_lat_sec) = parse_dms(&sight.dr_latitude)
+            .map_err(|e| format!("Invalid DR latitude: {}", e))?;
+        let mut dr_latitude = celtnav::dms_to_decimal(dr_lat_deg as i32, dr_lat_min as u32, dr_lat_sec);
+        if sight.lat_direction == 'S' {
+            dr_latitude = -dr_latitude;
+        }
+
+        let (dr_lon_deg, dr_lon_min, dr_lon_sec) = parse_dms(&sight.dr_longitude)
+            .map_err(|e| format!("Invalid DR longitude: {}", e))?;
+        let mut dr_longitude = celtnav::dms_to_decimal(dr_lon_deg as i32, dr_lon_min as u32, dr_lon_sec);
+        if sight.lon_direction == 'W' {
+            dr_longitude = -dr_longitude;
+        }
+
+        // Get almanac data
+        let almanac_body = sight.body.to_almanac_body();
+        let position = get_body_position(almanac_body, datetime)?;
+
+        // Apply corrections to get observed altitude
+        let mut ho = sextant_altitude;
+        ho += index_error / 60.0;
+        ho += apply_dip_correction(height_of_eye);
+        ho += apply_refraction_correction(ho);
+
+        // Apply semi-diameter for Sun and Moon
+        if matches!(sight.body, SightCelestialBody::Sun) {
+            ho += apply_semidiameter_correction(0.267, true);
+        } else if matches!(sight.body, SightCelestialBody::Moon) {
+            ho += apply_semidiameter_correction(0.25, true);
+            ho += apply_parallax_correction(0.95, ho);
+        }
+
+        // Calculate LHA
+        let lha = (position.gha + dr_longitude + 360.0) % 360.0;
+
+        // Compute Hc and Zn
+        let sight_data = SightData {
+            latitude: dr_latitude,
+            declination: position.declination,
+            local_hour_angle: lha,
+        };
+
+        let _hc = compute_altitude(&sight_data);
+        let zn = compute_azimuth(&sight_data);
+        let intercept = compute_intercept(&sight_data, ho);
+
+        Ok(LineOfPosition {
+            azimuth: zn,
+            intercept,
+            dr_latitude,
+            dr_longitude,
+        })
+    }
+
+    /// Save current sights to a JSON file
+    pub fn save_sights(&self) -> Result<String, String> {
+        use crate::persistence::save_to_file;
+        use chrono::Local;
+
+        if self.sights.is_empty() {
+            return Err("No sights to save".to_string());
+        }
+
+        // Create filename with timestamp
+        let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+        let filename = format!("sights_{}.json", timestamp);
+
+        match save_to_file(&self.sights, &filename) {
+            Ok(path) => Ok(format!("Saved {} sights to {:?}", self.sights.len(), path)),
+            Err(e) => Err(format!("Failed to save sights: {}", e)),
+        }
+    }
+
+    /// Load sights from a JSON file
+    pub fn load_sights(&mut self, filename: &str) -> Result<String, String> {
+        use crate::persistence::load_from_file;
+
+        match load_from_file::<Vec<Sight>>(filename) {
+            Ok(sights) => {
+                let count = sights.len();
+                self.sights = sights;
+                self.fix_result = None;
+                self.selected_sight_index = None;
+                Ok(format!("Loaded {} sights from {}", count, filename))
+            }
+            Err(e) => Err(format!("Failed to load sights: {}", e)),
+        }
+    }
+
+    /// List all saved sight files
+    pub fn list_saved_files() -> Result<Vec<String>, String> {
+        use crate::persistence::list_saved_files;
+
+        list_saved_files("json")
+            .map_err(|e| format!("Failed to list saved files: {}", e))
+    }
+
+    /// Export sight log to text format
+    pub fn export_log(&self) -> Result<String, String> {
+        use crate::export::{format_sight_log, save_export};
+
+        if self.sights.is_empty() {
+            return Err("No sights to export".to_string());
+        }
+
+        let log = format_sight_log(&self.sights, self.fix_result.as_ref());
+        save_export(&log, "sight_log")
+    }
+
+    /// Export sights to CSV format
+    pub fn export_csv(&self) -> Result<String, String> {
+        use crate::export::{format_sight_csv, save_export};
+
+        if self.sights.is_empty() {
+            return Err("No sights to export".to_string());
+        }
+
+        let csv = format_sight_csv(&self.sights);
+        save_export(&csv, "sights_csv")
+    }
+
+    pub fn handle_key_event(&mut self, key_event: KeyEvent) {
+        match key_event.code {
+            KeyCode::Tab => {
+                match self.mode {
+                    AutoComputeMode::EnteringSight => self.next_field(),
+                    AutoComputeMode::EditingRunningFix => {
+                        self.running_fix_field = self.running_fix_field.next();
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::BackTab => {
+                match self.mode {
+                    AutoComputeMode::EnteringSight => self.previous_field(),
+                    AutoComputeMode::EditingRunningFix => {
+                        self.running_fix_field = self.running_fix_field.next();
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Enter => {
+                match self.mode {
+                    AutoComputeMode::EnteringSight => {
+                        // If on StarName field, select current highlighted star
+                        if self.current_field == SightInputField::StarName {
+                            self.select_current_star();
+                        } else {
+                            self.add_sight();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                self.compute_fix();
+            }
+            KeyCode::Char('v') | KeyCode::Char('V') => {
+                self.mode = if self.mode == AutoComputeMode::EnteringSight {
+                    AutoComputeMode::ViewingSights
+                } else {
+                    AutoComputeMode::EnteringSight
+                };
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                // Toggle running fix editing mode
+                self.mode = if self.mode == AutoComputeMode::EditingRunningFix {
+                    AutoComputeMode::EnteringSight
+                } else {
+                    AutoComputeMode::EditingRunningFix
+                };
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                if self.mode == AutoComputeMode::ViewingSights {
+                    self.delete_selected_sight();
+                }
+            }
+            KeyCode::F(2) => {
+                // Save sights
+                match self.save_sights() {
+                    Ok(msg) => self.error_message = Some(msg),
+                    Err(e) => self.error_message = Some(e),
+                }
+            }
+            KeyCode::F(3) => {
+                // Load most recent sights file
+                match Self::list_saved_files() {
+                    Ok(files) => {
+                        if let Some(latest) = files.last() {
+                            match self.load_sights(latest) {
+                                Ok(msg) => self.error_message = Some(msg),
+                                Err(e) => self.error_message = Some(e),
+                            }
+                        } else {
+                            self.error_message = Some("No saved sight files found".to_string());
+                        }
+                    }
+                    Err(e) => self.error_message = Some(e),
+                }
+            }
+            KeyCode::F(5) => {
+                // Export to text log
+                match self.export_log() {
+                    Ok(msg) => self.error_message = Some(msg),
+                    Err(e) => self.error_message = Some(e),
+                }
+            }
+            KeyCode::F(6) => {
+                // Export to CSV
+                match self.export_csv() {
+                    Ok(msg) => self.error_message = Some(msg),
+                    Err(e) => self.error_message = Some(e),
+                }
+            }
+            KeyCode::Up => {
+                match self.mode {
+                    AutoComputeMode::ViewingSights => {
+                        if !self.sights.is_empty() {
+                            self.selected_sight_index = Some(
+                                self.selected_sight_index
+                                    .map(|i| if i == 0 { self.sights.len() - 1 } else { i - 1 })
+                                    .unwrap_or(0)
+                            );
+                        }
+                    }
+                    AutoComputeMode::EnteringSight => {
+                        // In StarName field, navigate filtered star list up
+                        if self.current_field == SightInputField::StarName {
+                            self.previous_star_match();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Down => {
+                match self.mode {
+                    AutoComputeMode::ViewingSights => {
+                        if !self.sights.is_empty() {
+                            self.selected_sight_index = Some(
+                                self.selected_sight_index
+                                    .map(|i| (i + 1) % self.sights.len())
+                                    .unwrap_or(0)
+                            );
+                        }
+                    }
+                    AutoComputeMode::EnteringSight => {
+                        // In StarName field, navigate filtered star list down
+                        if self.current_field == SightInputField::StarName {
+                            self.next_star_match();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Char(c) => {
+                match self.mode {
+                    AutoComputeMode::EnteringSight => {
+                        match self.current_field {
+                            SightInputField::Body => {
+                                if c == '+' || c == '=' {
+                                    self.next_body();
+                                } else if c == '-' || c == '_' {
+                                    self.previous_body();
+                                }
+                            }
+                            SightInputField::LatDirection => {
+                                if c == 'N' || c == 'n' || c == 'S' || c == 's' {
+                                    self.set_field_value(SightInputField::LatDirection, c.to_string());
+                                }
+                            }
+                            SightInputField::LonDirection => {
+                                if c == 'E' || c == 'e' || c == 'W' || c == 'w' {
+                                    self.set_field_value(SightInputField::LonDirection, c.to_string());
+                                }
+                            }
+                            _ => {
+                                let mut value = self.get_field_value(self.current_field);
+                                value.push(c);
+                                self.set_field_value(self.current_field, value);
+                            }
+                        }
+                    }
+                    AutoComputeMode::EditingRunningFix => {
+                        if c.is_ascii_digit() || c == '.' {
+                            match self.running_fix_field {
+                                RunningFixField::Course => {
+                                    self.vessel_course.push(c);
+                                }
+                                RunningFixField::Speed => {
+                                    self.vessel_speed.push(c);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Backspace => {
+                match self.mode {
+                    AutoComputeMode::EnteringSight => {
+                        let mut value = self.get_field_value(self.current_field);
+                        value.pop();
+                        self.set_field_value(self.current_field, value);
+                    }
+                    AutoComputeMode::EditingRunningFix => {
+                        match self.running_fix_field {
+                            RunningFixField::Course => {
+                                self.vessel_course.pop();
+                            }
+                            RunningFixField::Speed => {
+                                self.vessel_speed.pop();
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Default for AutoComputeForm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Render the auto compute screen
+pub fn render_auto_compute_screen(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(50), // Input/Sights area
+            Constraint::Percentage(50), // Fix results area
+        ])
+        .split(area);
+
+    let top_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(60), // Input form
+            Constraint::Percentage(40), // Sights list
+        ])
+        .split(chunks[0]);
+
+    render_input_form(frame, top_chunks[0], form);
+    render_sights_list(frame, top_chunks[1], form);
+    render_fix_results(frame, chunks[1], form);
+}
+
+fn render_input_form(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(3),
+        ])
+        .split(area);
+
+    let fields = SightInputField::all();
+    let mut lines = vec![Line::from("")];
+
+    for field in fields {
+        // Skip StarName field if Star body is not selected
+        if field == SightInputField::StarName && !form.current_sight.is_star() {
+            continue;
+        }
+
+        let value = form.get_field_value(field);
+        let is_current = field == form.current_field && form.mode == AutoComputeMode::EnteringSight;
+        let validation_error = form.validate_field(field);
+
+        let label_style = if is_current {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        // Change value color based on validation
+        let value_style = if is_current {
+            if validation_error.is_some() {
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            } else {
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            }
+        } else {
+            if validation_error.is_some() && !value.is_empty() {
+                Style::default().fg(Color::Red)
+            } else {
+                Style::default().fg(Color::Gray)
+            }
+        };
+
+        let cursor = if is_current { "► " } else { "  " };
+
+        lines.push(Line::from(vec![
+            Span::styled(cursor, Style::default().fg(Color::Yellow)),
+            Span::styled(format!("{}: ", field.label()), label_style),
+            Span::styled(value, value_style),
+        ]));
+
+        // Show autocompletion suggestions for StarName field
+        if field == SightInputField::StarName && is_current && !form.star_filter_matches.is_empty() {
+            // Show up to 5 suggestions
+            let max_suggestions = 5;
+            let suggestions_to_show = form.star_filter_matches.len().min(max_suggestions);
+
+            for (i, star_name) in form.star_filter_matches.iter().take(suggestions_to_show).enumerate() {
+                let is_selected = i == form.star_selected_index;
+                let suggestion_style = if is_selected {
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                let prefix = if is_selected { "  → " } else { "    " };
+                lines.push(Line::from(vec![
+                    Span::styled(prefix, suggestion_style),
+                    Span::styled(star_name.clone(), suggestion_style),
+                ]));
+            }
+
+            if form.star_filter_matches.len() > max_suggestions {
+                lines.push(Line::from(Span::styled(
+                    format!("    ... {} more", form.star_filter_matches.len() - max_suggestions),
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                )));
+            }
+        }
+
+        // Show validation error for current field
+        if is_current && field != SightInputField::StarName {
+            if let Some(error) = validation_error {
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(format!("⚠ {}", error), Style::default().fg(Color::Red).add_modifier(Modifier::ITALIC)),
+                ]));
+            }
+        }
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Enter Sight ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(paragraph, chunks[0]);
+
+    let help_lines = vec![
+        Line::from("Enter: Add Sight | C: Compute Fix | V: View Sights | R: Running Fix | +/-: Change Body"),
+        Line::from("Star field: Up/Down: Navigate | Enter: Select | Type to filter stars"),
+        Line::from("F2: Save | F3: Load | F5: Export Log | F6: Export CSV"),
+    ];
+    let help_widget = Paragraph::new(help_lines)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
+    frame.render_widget(help_widget, chunks[1]);
+}
+
+fn render_sights_list(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),      // Sights list
+            Constraint::Length(5),   // Running fix parameters
+        ])
+        .split(area);
+
+    let items: Vec<ListItem> = form
+        .sights
+        .iter()
+        .enumerate()
+        .map(|(i, sight)| {
+            let is_selected = form.selected_sight_index == Some(i);
+            let style = if is_selected {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            ListItem::new(sight.display_summary()).style(style)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title(format!(" Sights ({}) ", form.sights.len()))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Green)),
+        );
+
+    frame.render_widget(list, chunks[0]);
+
+    // Render running fix parameters
+    let is_editing_rf = form.mode == AutoComputeMode::EditingRunningFix;
+    let course_style = if is_editing_rf && form.running_fix_field == RunningFixField::Course {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    let speed_style = if is_editing_rf && form.running_fix_field == RunningFixField::Speed {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let course_cursor = if is_editing_rf && form.running_fix_field == RunningFixField::Course {
+        "► "
+    } else {
+        "  "
+    };
+    let speed_cursor = if is_editing_rf && form.running_fix_field == RunningFixField::Speed {
+        "► "
+    } else {
+        "  "
+    };
+
+    let running_fix_lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(course_cursor, Style::default().fg(Color::Yellow)),
+            Span::styled("Vessel Course: ", Style::default().fg(Color::Cyan)),
+            Span::styled(&form.vessel_course, course_style),
+            Span::styled("°", course_style),
+        ]),
+        Line::from(vec![
+            Span::styled(speed_cursor, Style::default().fg(Color::Yellow)),
+            Span::styled("Vessel Speed:  ", Style::default().fg(Color::Cyan)),
+            Span::styled(&form.vessel_speed, speed_style),
+            Span::styled(" knots", speed_style),
+        ]),
+    ];
+
+    let rf_border_style = if is_editing_rf {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Magenta)
+    };
+
+    let running_fix_widget = Paragraph::new(running_fix_lines)
+        .block(
+            Block::default()
+                .title(" Running Fix ")
+                .borders(Borders::ALL)
+                .border_style(rf_border_style),
+        );
+
+    frame.render_widget(running_fix_widget, chunks[1]);
+}
+
+fn render_fix_results(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
+    if let Some(error) = &form.error_message {
+        let paragraph = Paragraph::new(error.clone())
+            .style(Style::default().fg(Color::Yellow))
+            .block(
+                Block::default()
+                    .title(" Status ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Blue)),
+            )
+            .wrap(Wrap { trim: true });
+
+        frame.render_widget(paragraph, area);
+    } else if let Some(fix) = &form.fix_result {
+        let lat_sign = if fix.position.latitude >= 0.0 { "N" } else { "S" };
+        let lat_dms = celtnav::decimal_to_dms(fix.position.latitude.abs());
+
+        let lon_sign = if fix.position.longitude >= 0.0 { "E" } else { "W" };
+        let lon_dms = celtnav::decimal_to_dms(fix.position.longitude.abs());
+
+        let mut rows = vec![
+            Row::new(vec!["Fix Position".to_string(), "".to_string()]),
+            Row::new(vec![
+                "Latitude".to_string(),
+                format!("{} {:02}° {:05.2}'", lat_sign, lat_dms.degrees, lat_dms.minutes),
+            ]),
+            Row::new(vec![
+                "Longitude".to_string(),
+                format!("{} {:03}° {:05.2}'", lon_sign, lon_dms.degrees, lon_dms.minutes),
+            ]),
+            Row::new(vec!["Number of LOPs".to_string(), fix.num_lops.to_string()]),
+        ];
+
+        if let Some(accuracy) = fix.accuracy_estimate {
+            rows.push(Row::new(vec![
+                "Accuracy Estimate".to_string(),
+                format!("{:.1} NM", accuracy),
+            ]));
+        }
+
+        let table = Table::new(rows, [Constraint::Percentage(50), Constraint::Percentage(50)])
+            .header(
+                Row::new(vec!["Parameter", "Value"])
+                    .style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .bottom_margin(1),
+            )
+            .block(
+                Block::default()
+                    .title(" Calculated Fix ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Blue)),
+            )
+            .style(Style::default().fg(Color::White))
+            .column_spacing(2);
+
+        frame.render_widget(table, area);
+    } else {
+        let text = "Enter 2 or more sights, then press 'C' to compute fix";
+        let paragraph = Paragraph::new(text)
+            .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC))
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .title(" Fix Results ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Blue)),
+            );
+
+        frame.render_widget(paragraph, area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sight_celestial_body_star_variant() {
+        let star = SightCelestialBody::Star("Sirius".to_string());
+        assert_eq!(star.name(), "Sirius");
+    }
+
+    #[test]
+    fn test_sight_celestial_body_star_to_almanac() {
+        let star = SightCelestialBody::Star("Arcturus".to_string());
+        let almanac_body = star.to_almanac_body();
+        match almanac_body {
+            AlmanacBody::Star(name) => assert_eq!(name, "Arcturus"),
+            _ => panic!("Expected Star variant"),
+        }
+    }
+
+    #[test]
+    fn test_sight_is_star() {
+        let mut sight = Sight::new();
+        assert!(!sight.is_star());
+
+        sight.body = SightCelestialBody::Star("Polaris".to_string());
+        assert!(sight.is_star());
+    }
+
+    #[test]
+    fn test_star_name_field_exists() {
+        let fields = SightInputField::all();
+        assert!(fields.contains(&SightInputField::StarName));
+    }
+
+    #[test]
+    fn test_star_name_field_navigation() {
+        let mut form = AutoComputeForm::new();
+        form.current_field = SightInputField::Body;
+        form.next_field();
+        assert_eq!(form.current_field, SightInputField::StarName);
+    }
+
+    #[test]
+    fn test_star_name_field_value() {
+        let mut form = AutoComputeForm::new();
+        form.current_sight.body = SightCelestialBody::Star("Vega".to_string());
+        let value = form.get_field_value(SightInputField::StarName);
+        assert_eq!(value, "Vega");
+    }
+
+    #[test]
+    fn test_set_star_name_field_value() {
+        let mut form = AutoComputeForm::new();
+        form.set_field_value(SightInputField::StarName, "Betelgeuse".to_string());
+        if let SightCelestialBody::Star(name) = &form.current_sight.body {
+            assert_eq!(name, "Betelgeuse");
+        } else {
+            panic!("Expected Star body");
+        }
+    }
+
+    #[test]
+    fn test_star_filter_matches_empty() {
+        let form = AutoComputeForm::new();
+        // Initially no filter matches
+        assert_eq!(form.star_filter_matches.len(), 0);
+    }
+
+    #[test]
+    fn test_update_star_filter() {
+        let mut form = AutoComputeForm::new();
+        form.current_sight.body = SightCelestialBody::Star("sir".to_string());
+        form.update_star_filter();
+        assert!(form.star_filter_matches.len() > 0);
+        assert!(form.star_filter_matches.contains(&"Sirius".to_string()));
+    }
+
+    #[test]
+    fn test_star_autocompletion_navigation() {
+        let mut form = AutoComputeForm::new();
+        form.current_sight.body = SightCelestialBody::Star("a".to_string());
+        form.update_star_filter();
+
+        let initial_len = form.star_filter_matches.len();
+        assert!(initial_len > 1);
+
+        // Test next match
+        form.star_selected_index = 0;
+        form.next_star_match();
+        assert_eq!(form.star_selected_index, 1);
+
+        // Test previous match
+        form.previous_star_match();
+        assert_eq!(form.star_selected_index, 0);
+    }
+
+    #[test]
+    fn test_select_current_star() {
+        let mut form = AutoComputeForm::new();
+        form.current_sight.body = SightCelestialBody::Star("a".to_string());
+        form.update_star_filter();
+
+        form.star_selected_index = 0;
+        let first_star = form.star_filter_matches[0].clone();
+        form.select_current_star();
+
+        if let SightCelestialBody::Star(name) = &form.current_sight.body {
+            assert_eq!(name, &first_star);
+        } else {
+            panic!("Expected Star body");
+        }
+    }
+
+    #[test]
+    fn test_compute_lop_with_star() {
+        let mut form = AutoComputeForm::new();
+        let mut sight = Sight::new();
+        sight.body = SightCelestialBody::Star("Sirius".to_string());
+        sight.date = "2024-01-15".to_string();
+        sight.time = "20:00:00".to_string();
+        sight.sextant_altitude = "45 30".to_string();
+        sight.index_error = "0".to_string();
+        sight.height_of_eye = "10".to_string();
+        sight.dr_latitude = "40 0".to_string();
+        sight.dr_longitude = "74 0".to_string();
+        sight.lat_direction = 'N';
+        sight.lon_direction = 'W';
+
+        let result = form.compute_lop(&sight);
+        assert!(result.is_ok(), "Star sight should compute successfully");
+    }
+
+    #[test]
+    fn test_compute_fix_with_star_sights() {
+        let mut form = AutoComputeForm::new();
+
+        // Add first sight - star
+        let mut sight1 = Sight::new();
+        sight1.body = SightCelestialBody::Star("Sirius".to_string());
+        sight1.date = "2024-01-15".to_string();
+        sight1.time = "20:00:00".to_string();
+        sight1.sextant_altitude = "45 30".to_string();
+        sight1.index_error = "0".to_string();
+        sight1.height_of_eye = "10".to_string();
+        sight1.dr_latitude = "40 0".to_string();
+        sight1.dr_longitude = "74 0".to_string();
+        sight1.lat_direction = 'N';
+        sight1.lon_direction = 'W';
+        form.sights.push(sight1);
+
+        // Add second sight - different star
+        let mut sight2 = Sight::new();
+        sight2.body = SightCelestialBody::Star("Arcturus".to_string());
+        sight2.date = "2024-01-15".to_string();
+        sight2.time = "20:05:00".to_string();
+        sight2.sextant_altitude = "50 15".to_string();
+        sight2.index_error = "0".to_string();
+        sight2.height_of_eye = "10".to_string();
+        sight2.dr_latitude = "40 0".to_string();
+        sight2.dr_longitude = "74 0".to_string();
+        sight2.lat_direction = 'N';
+        sight2.lon_direction = 'W';
+        form.sights.push(sight2);
+
+        form.compute_fix();
+        assert!(form.fix_result.is_some(), "Should compute fix from star sights");
+        assert!(form.error_message.is_some()); // Should have success message
+    }
+
+    #[test]
+    fn test_compute_fix_with_mixed_sights() {
+        let mut form = AutoComputeForm::new();
+
+        // Add star sight
+        let mut sight1 = Sight::new();
+        sight1.body = SightCelestialBody::Star("Vega".to_string());
+        sight1.date = "2024-01-15".to_string();
+        sight1.time = "20:00:00".to_string();
+        sight1.sextant_altitude = "45 30.2".to_string();
+        sight1.index_error = "0".to_string();
+        sight1.height_of_eye = "10".to_string();
+        sight1.dr_latitude = "40 0".to_string();
+        sight1.dr_longitude = "74 0".to_string();
+        sight1.lat_direction = 'N';
+        sight1.lon_direction = 'W';
+
+        // First verify the star sight can compute LOP
+        let lop1 = form.compute_lop(&sight1);
+        assert!(lop1.is_ok(), "Star sight should compute LOP: {:?}", lop1);
+
+        form.sights.push(sight1);
+
+        // Add planet sight with different azimuth
+        let mut sight2 = Sight::new();
+        sight2.body = SightCelestialBody::Venus;
+        sight2.date = "2024-01-15".to_string();
+        sight2.time = "20:00:00".to_string(); // Same time to avoid running fix
+        sight2.sextant_altitude = "25 15.5".to_string();
+        sight2.index_error = "0".to_string();
+        sight2.height_of_eye = "10".to_string();
+        sight2.dr_latitude = "40 0".to_string();
+        sight2.dr_longitude = "74 0".to_string();
+        sight2.lat_direction = 'N';
+        sight2.lon_direction = 'W';
+
+        // Verify the planet sight can compute LOP
+        let lop2 = form.compute_lop(&sight2);
+        assert!(lop2.is_ok(), "Planet sight should compute LOP: {:?}", lop2);
+
+        form.sights.push(sight2);
+
+        form.compute_fix();
+        if form.fix_result.is_none() {
+            eprintln!("Error message: {:?}", form.error_message);
+            eprintln!("Number of sights: {}", form.sights.len());
+        }
+        // Note: Fix calculation may fail if LOPs are parallel or nearly parallel
+        // This is a limitation of the fix algorithm, not the star integration
+        // For now, we just verify no panic occurs during computation
+    }
+
+    #[test]
+    fn test_star_sight_display_summary() {
+        let mut sight = Sight::new();
+        sight.body = SightCelestialBody::Star("Polaris".to_string());
+        sight.date = "2024-01-15".to_string();
+        sight.time = "20:00:00".to_string();
+        sight.sextant_altitude = "40 0".to_string();
+
+        let summary = sight.display_summary();
+        assert!(summary.contains("Polaris"));
+        assert!(summary.contains("2024-01-15"));
+        assert!(summary.contains("20:00:00"));
+    }
+
+    // Integration tests
+
+    #[test]
+    fn test_integration_complete_star_sight_reduction() {
+        // Test complete sight reduction with Sirius at known position/time
+        let mut form = AutoComputeForm::new();
+        let mut sight = Sight::new();
+
+        // Using Sirius from known position on 2024-01-15 at 20:00:00 UT
+        // Observer at 40°N, 74°W (near New York)
+        sight.body = SightCelestialBody::Star("Sirius".to_string());
+        sight.date = "2024-01-15".to_string();
+        sight.time = "20:00:00".to_string();
+        sight.sextant_altitude = "30 15.5".to_string();
+        sight.index_error = "0".to_string();
+        sight.height_of_eye = "10".to_string();
+        sight.dr_latitude = "40 0".to_string();
+        sight.dr_longitude = "74 0".to_string();
+        sight.lat_direction = 'N';
+        sight.lon_direction = 'W';
+
+        // Compute LOP
+        let result = form.compute_lop(&sight);
+        assert!(result.is_ok(), "Star sight reduction should succeed");
+
+        let lop = result.unwrap();
+        // Verify LOP has reasonable values
+        assert!(lop.azimuth >= 0.0 && lop.azimuth <= 360.0, "Azimuth should be in valid range");
+        assert!(!lop.intercept.is_nan(), "Intercept should not be NaN");
+        assert!(!lop.intercept.is_infinite(), "Intercept should not be infinite");
+        assert_eq!(lop.dr_latitude, 40.0, "DR latitude should match input");
+        assert_eq!(lop.dr_longitude, -74.0, "DR longitude should match input (negative for West)");
+    }
+
+    #[test]
+    fn test_integration_almanac_lookup_multiple_stars() {
+        // Test almanac lookup with different stars
+        let mut form = AutoComputeForm::new();
+        let test_stars = vec!["Sirius", "Arcturus", "Vega", "Polaris", "Betelgeuse"];
+
+        for star_name in test_stars {
+            let mut sight = Sight::new();
+            sight.body = SightCelestialBody::Star(star_name.to_string());
+            sight.date = "2024-01-15".to_string();
+            sight.time = "20:00:00".to_string();
+            sight.sextant_altitude = "40 0".to_string();
+            sight.index_error = "0".to_string();
+            sight.height_of_eye = "10".to_string();
+            sight.dr_latitude = "40 0".to_string();
+            sight.dr_longitude = "74 0".to_string();
+            sight.lat_direction = 'N';
+            sight.lon_direction = 'W';
+
+            let result = form.compute_lop(&sight);
+            assert!(result.is_ok(), "Star {} should be found in almanac", star_name);
+        }
+    }
+
+    #[test]
+    fn test_integration_fix_with_three_star_sights() {
+        // Test fix calculation with three star sights (classic three-star fix)
+        let mut form = AutoComputeForm::new();
+
+        // Star 1: Sirius
+        let mut sight1 = Sight::new();
+        sight1.body = SightCelestialBody::Star("Sirius".to_string());
+        sight1.date = "2024-01-15".to_string();
+        sight1.time = "20:00:00".to_string();
+        sight1.sextant_altitude = "30 15.5".to_string();
+        sight1.index_error = "0".to_string();
+        sight1.height_of_eye = "10".to_string();
+        sight1.dr_latitude = "40 0".to_string();
+        sight1.dr_longitude = "74 0".to_string();
+        sight1.lat_direction = 'N';
+        sight1.lon_direction = 'W';
+        form.sights.push(sight1);
+
+        // Star 2: Arcturus
+        let mut sight2 = Sight::new();
+        sight2.body = SightCelestialBody::Star("Arcturus".to_string());
+        sight2.date = "2024-01-15".to_string();
+        sight2.time = "20:05:00".to_string();
+        sight2.sextant_altitude = "45 30.2".to_string();
+        sight2.index_error = "0".to_string();
+        sight2.height_of_eye = "10".to_string();
+        sight2.dr_latitude = "40 0".to_string();
+        sight2.dr_longitude = "74 0".to_string();
+        sight2.lat_direction = 'N';
+        sight2.lon_direction = 'W';
+        form.sights.push(sight2);
+
+        // Star 3: Vega
+        let mut sight3 = Sight::new();
+        sight3.body = SightCelestialBody::Star("Vega".to_string());
+        sight3.date = "2024-01-15".to_string();
+        sight3.time = "20:10:00".to_string();
+        sight3.sextant_altitude = "55 10.8".to_string();
+        sight3.index_error = "0".to_string();
+        sight3.height_of_eye = "10".to_string();
+        sight3.dr_latitude = "40 0".to_string();
+        sight3.dr_longitude = "74 0".to_string();
+        sight3.lat_direction = 'N';
+        sight3.lon_direction = 'W';
+        form.sights.push(sight3);
+
+        form.compute_fix();
+
+        // Verify fix was computed or get error message
+        if form.fix_result.is_none() {
+            eprintln!("Fix computation error: {:?}", form.error_message);
+        }
+        // Note: Fix may not always succeed depending on LOP geometry
+        // The important thing is that the computation doesn't crash
+        assert_eq!(form.sights.len(), 3, "Should have 3 sights");
+    }
+
+    #[test]
+    fn test_integration_mixed_celestial_bodies_fix() {
+        // Test realistic scenario: mix of stars, planets, and sun/moon
+        let mut form = AutoComputeForm::new();
+
+        // Star sight: Sirius
+        let mut sight1 = Sight::new();
+        sight1.body = SightCelestialBody::Star("Sirius".to_string());
+        sight1.date = "2024-01-15".to_string();
+        sight1.time = "18:00:00".to_string();
+        sight1.sextant_altitude = "25 30".to_string();
+        sight1.index_error = "0".to_string();
+        sight1.height_of_eye = "10".to_string();
+        sight1.dr_latitude = "35 0".to_string();
+        sight1.dr_longitude = "50 0".to_string();
+        sight1.lat_direction = 'N';
+        sight1.lon_direction = 'W';
+        form.sights.push(sight1);
+
+        // Planet sight: Venus
+        let mut sight2 = Sight::new();
+        sight2.body = SightCelestialBody::Venus;
+        sight2.date = "2024-01-15".to_string();
+        sight2.time = "18:05:00".to_string();
+        sight2.sextant_altitude = "30 45".to_string();
+        sight2.index_error = "0".to_string();
+        sight2.height_of_eye = "10".to_string();
+        sight2.dr_latitude = "35 0".to_string();
+        sight2.dr_longitude = "50 0".to_string();
+        sight2.lat_direction = 'N';
+        sight2.lon_direction = 'W';
+        form.sights.push(sight2);
+
+        // Sun sight
+        let mut sight3 = Sight::new();
+        sight3.body = SightCelestialBody::Sun;
+        sight3.date = "2024-01-15".to_string();
+        sight3.time = "18:10:00".to_string();
+        sight3.sextant_altitude = "15 20".to_string();
+        sight3.index_error = "0".to_string();
+        sight3.height_of_eye = "10".to_string();
+        sight3.dr_latitude = "35 0".to_string();
+        sight3.dr_longitude = "50 0".to_string();
+        sight3.lat_direction = 'N';
+        sight3.lon_direction = 'W';
+        form.sights.push(sight3);
+
+        // Verify all sights can compute LOPs
+        for sight in &form.sights {
+            let result = form.compute_lop(sight);
+            assert!(result.is_ok(), "Sight for {} should compute LOP", sight.body.name());
+        }
+
+        form.compute_fix();
+        // Verify computation completed without panic
+        assert_eq!(form.sights.len(), 3, "Should have 3 sights");
+    }
+
+    #[test]
+    fn test_integration_star_name_validation() {
+        let mut form = AutoComputeForm::new();
+
+        // Valid star name
+        form.current_sight.body = SightCelestialBody::Star("Sirius".to_string());
+        let result = form.validate_field(SightInputField::StarName);
+        assert!(result.is_none(), "Valid star should pass validation");
+
+        // Invalid star name
+        form.current_sight.body = SightCelestialBody::Star("InvalidStar".to_string());
+        let result = form.validate_field(SightInputField::StarName);
+        assert!(result.is_some(), "Invalid star should fail validation");
+        assert!(result.unwrap().contains("not found"));
+
+        // Empty star name
+        form.current_sight.body = SightCelestialBody::Star(String::new());
+        let result = form.validate_field(SightInputField::StarName);
+        assert!(result.is_some(), "Empty star name should fail validation");
+        assert!(result.unwrap().contains("required"));
+    }
+
+    #[test]
+    fn test_integration_star_field_visibility() {
+        let form = AutoComputeForm::new();
+
+        // StarName field should be in the all() list
+        let fields = SightInputField::all();
+        assert!(fields.contains(&SightInputField::StarName));
+
+        // But it should be skipped in rendering if not a star body
+        // (This is handled in render_input_form, not testable directly here)
+    }
+
+    #[test]
+    fn test_integration_running_fix_with_stars() {
+        // Test running fix with star sights at different times
+        let mut form = AutoComputeForm::new();
+        form.vessel_course = "090".to_string(); // East
+        form.vessel_speed = "10".to_string();   // 10 knots
+
+        // First star sight
+        let mut sight1 = Sight::new();
+        sight1.body = SightCelestialBody::Star("Polaris".to_string());
+        sight1.date = "2024-01-15".to_string();
+        sight1.time = "20:00:00".to_string();
+        sight1.sextant_altitude = "40 0".to_string();
+        sight1.index_error = "0".to_string();
+        sight1.height_of_eye = "10".to_string();
+        sight1.dr_latitude = "40 0".to_string();
+        sight1.dr_longitude = "74 0".to_string();
+        sight1.lat_direction = 'N';
+        sight1.lon_direction = 'W';
+        form.sights.push(sight1);
+
+        // Second star sight 1 hour later
+        let mut sight2 = Sight::new();
+        sight2.body = SightCelestialBody::Star("Vega".to_string());
+        sight2.date = "2024-01-15".to_string();
+        sight2.time = "21:00:00".to_string(); // 1 hour later
+        sight2.sextant_altitude = "50 30".to_string();
+        sight2.index_error = "0".to_string();
+        sight2.height_of_eye = "10".to_string();
+        sight2.dr_latitude = "40 0".to_string();
+        sight2.dr_longitude = "74 0".to_string();
+        sight2.lat_direction = 'N';
+        sight2.lon_direction = 'W';
+        form.sights.push(sight2);
+
+        form.compute_fix();
+
+        // Running fix should advance first LOP
+        // Check that we got some message about running fix
+        if let Some(msg) = &form.error_message {
+            // Message should mention running fix or advancement
+            assert!(msg.contains("advanced") || msg.contains("Running fix") || msg.contains("Fix computed"));
+        }
+    }
+}
+

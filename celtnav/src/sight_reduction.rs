@@ -1,0 +1,349 @@
+//! Sight reduction functions for celestial navigation
+//!
+//! This module provides functions for reducing celestial sights, including:
+//! - Computing altitude (Hc) and azimuth (Zn) using spherical trigonometry
+//! - Calculating intercept (difference between observed and computed altitude)
+//! - Applying altitude corrections (refraction, dip, semi-diameter, parallax)
+
+use crate::coords::{equatorial_to_horizontal, EquatorialCoords};
+
+/// Sight data required for sight reduction calculations
+#[derive(Debug, Clone, Copy)]
+pub struct SightData {
+    /// Observer's latitude in degrees (North positive, South negative)
+    pub latitude: f64,
+
+    /// Celestial body's declination in degrees (North positive, South negative)
+    pub declination: f64,
+
+    /// Local Hour Angle (LHA) in degrees
+    /// LHA = GHA + Longitude (East positive)
+    pub local_hour_angle: f64,
+}
+
+/// Altitude corrections structure
+#[derive(Debug, Clone, Copy)]
+pub struct AltitudeCorrections {
+    /// Refraction correction in degrees (always negative)
+    pub refraction: f64,
+
+    /// Dip correction in degrees (always negative)
+    pub dip: f64,
+
+    /// Semi-diameter correction in degrees (positive for lower limb, negative for upper)
+    pub semidiameter: f64,
+
+    /// Parallax correction in degrees (always positive, significant only for Moon)
+    pub parallax: f64,
+}
+
+/// Computes the altitude (Hc) of a celestial body
+///
+/// Uses the fundamental equation of spherical astronomy:
+/// sin(Hc) = sin(Lat) * sin(Dec) + cos(Lat) * cos(Dec) * cos(LHA)
+///
+/// This is equivalent to converting equatorial coordinates to horizontal coordinates.
+///
+/// # Arguments
+/// * `sight_data` - Sight data containing latitude, declination, and LHA
+///
+/// # Returns
+/// Computed altitude (Hc) in degrees
+///
+/// # Examples
+/// ```
+/// use celtnav::sight_reduction::{compute_altitude, SightData};
+///
+/// let sight = SightData {
+///     latitude: 40.0,
+///     declination: 20.0,
+///     local_hour_angle: 30.0,
+/// };
+/// let hc = compute_altitude(&sight);
+/// ```
+pub fn compute_altitude(sight_data: &SightData) -> f64 {
+    // Convert to equatorial coordinates
+    let eq_coords = EquatorialCoords {
+        declination: sight_data.declination,
+        hour_angle: sight_data.local_hour_angle,
+    };
+
+    // Convert to horizontal coordinates and return altitude
+    let hz_coords = equatorial_to_horizontal(&eq_coords, sight_data.latitude);
+    hz_coords.altitude
+}
+
+/// Computes the azimuth (Zn) of a celestial body
+///
+/// Uses spherical trigonometry to calculate the true azimuth.
+/// Azimuth is measured clockwise from North: N=0°, E=90°, S=180°, W=270°
+///
+/// # Arguments
+/// * `sight_data` - Sight data containing latitude, declination, and LHA
+///
+/// # Returns
+/// Azimuth (Zn) in degrees (0 to 360)
+///
+/// # Examples
+/// ```
+/// use celtnav::sight_reduction::{compute_azimuth, SightData};
+///
+/// let sight = SightData {
+///     latitude: 40.0,
+///     declination: 20.0,
+///     local_hour_angle: 30.0,
+/// };
+/// let zn = compute_azimuth(&sight);
+/// ```
+pub fn compute_azimuth(sight_data: &SightData) -> f64 {
+    // Convert to equatorial coordinates
+    let eq_coords = EquatorialCoords {
+        declination: sight_data.declination,
+        hour_angle: sight_data.local_hour_angle,
+    };
+
+    // Convert to horizontal coordinates and return azimuth
+    let hz_coords = equatorial_to_horizontal(&eq_coords, sight_data.latitude);
+    hz_coords.azimuth
+}
+
+/// Computes the intercept
+///
+/// The intercept is the difference between observed altitude (Ho) and computed altitude (Hc).
+/// - Positive intercept: Ho > Hc, plot TOWARD the body
+/// - Negative intercept: Ho < Hc, plot AWAY from the body
+///
+/// Result is in nautical miles (1 arcminute = 1 nautical mile)
+///
+/// # Arguments
+/// * `sight_data` - Sight data for computing Hc
+/// * `observed_altitude` - Observed altitude (Ho) in degrees after corrections
+///
+/// # Returns
+/// Intercept in nautical miles (positive = toward, negative = away)
+///
+/// # Examples
+/// ```
+/// use celtnav::sight_reduction::{compute_intercept, SightData};
+///
+/// let sight = SightData {
+///     latitude: 40.0,
+///     declination: 20.0,
+///     local_hour_angle: 30.0,
+/// };
+/// let intercept = compute_intercept(&sight, 60.0);
+/// ```
+pub fn compute_intercept(sight_data: &SightData, observed_altitude: f64) -> f64 {
+    let computed_altitude = compute_altitude(sight_data);
+
+    // Intercept = Ho - Hc
+    let intercept_degrees = observed_altitude - computed_altitude;
+
+    // Convert to nautical miles (60 arcminutes = 1 degree, 1 arcminute = 1 NM)
+    intercept_degrees * 60.0
+}
+
+/// Applies refraction correction
+///
+/// Atmospheric refraction causes celestial bodies to appear higher than they actually are.
+/// The correction is greatest at the horizon (~34 arcminutes) and zero at the zenith.
+///
+/// Uses Bennett's formula (accurate to 0.07' for altitudes > 15°):
+/// R = cot(h + 7.31/(h + 4.4))
+/// where h is apparent altitude in degrees, R is refraction in arcminutes
+///
+/// # Arguments
+/// * `apparent_altitude` - Apparent altitude in degrees (sextant altitude after index correction)
+///
+/// # Returns
+/// Refraction correction in degrees (always negative, to be added to apparent altitude)
+///
+/// # Examples
+/// ```
+/// use celtnav::sight_reduction::apply_refraction_correction;
+///
+/// let correction = apply_refraction_correction(30.0);
+/// assert!(correction < 0.0); // Refraction is always negative
+/// ```
+pub fn apply_refraction_correction(apparent_altitude: f64) -> f64 {
+    // Handle edge cases
+    if apparent_altitude >= 90.0 {
+        return 0.0; // No refraction at zenith
+    }
+    if apparent_altitude < 0.0 {
+        // Use horizon value for negative altitudes
+        return apply_refraction_correction(0.0);
+    }
+
+    // Bennett's formula for refraction in arcminutes
+    let h = apparent_altitude;
+    let refraction_arcmin = 1.0 / ((h + 7.31 / (h + 4.4)).to_radians().tan());
+
+    // Convert to degrees and make negative (we subtract refraction from apparent altitude)
+    -(refraction_arcmin / 60.0)
+}
+
+/// Applies dip correction
+///
+/// Dip is the angle between the true horizon and the visible horizon,
+/// caused by the observer's height above sea level.
+///
+/// Formula: Dip (arcminutes) = 1.76 * sqrt(height_meters)
+/// or in degrees: Dip = 0.0293 * sqrt(height_meters)
+///
+/// The visible horizon appears lower than the true horizon, so dip is always negative.
+///
+/// # Arguments
+/// * `height_meters` - Observer's height above sea level in meters
+///
+/// # Returns
+/// Dip correction in degrees (always negative or zero)
+///
+/// # Examples
+/// ```
+/// use celtnav::sight_reduction::apply_dip_correction;
+///
+/// let correction = apply_dip_correction(10.0);
+/// assert!(correction < 0.0); // Dip is always negative
+/// ```
+pub fn apply_dip_correction(height_meters: f64) -> f64 {
+    if height_meters <= 0.0 {
+        return 0.0;
+    }
+
+    // Dip in arcminutes = 1.76 * sqrt(height)
+    let dip_arcmin = 1.76 * height_meters.sqrt();
+
+    // Convert to degrees and make negative
+    -(dip_arcmin / 60.0)
+}
+
+/// Applies semi-diameter correction
+///
+/// When observing the Sun or Moon, we typically observe the lower or upper limb
+/// rather than the center. This correction adjusts to give the altitude of the center.
+///
+/// - Lower limb: Add semi-diameter (observed limb is below center)
+/// - Upper limb: Subtract semi-diameter (observed limb is above center)
+///
+/// # Arguments
+/// * `semidiameter` - Semi-diameter of the body in degrees (from almanac)
+/// * `is_lower_limb` - True if lower limb was observed, false for upper limb
+///
+/// # Returns
+/// Semi-diameter correction in degrees
+///
+/// # Examples
+/// ```
+/// use celtnav::sight_reduction::apply_semidiameter_correction;
+///
+/// // Sun's semi-diameter is approximately 16 arcminutes (0.267°)
+/// let correction = apply_semidiameter_correction(0.267, true); // lower limb
+/// assert!(correction > 0.0); // Add for lower limb
+/// ```
+pub fn apply_semidiameter_correction(semidiameter: f64, is_lower_limb: bool) -> f64 {
+    if is_lower_limb {
+        semidiameter // Add for lower limb
+    } else {
+        -semidiameter // Subtract for upper limb
+    }
+}
+
+/// Applies parallax correction
+///
+/// Parallax is the difference in apparent position of a celestial body
+/// as viewed from the observer's position versus the center of Earth.
+///
+/// It's only significant for the Moon (~1°) and negligible for other bodies.
+///
+/// Formula: Parallax = HP * cos(apparent_altitude)
+/// where HP is horizontal parallax (from almanac)
+///
+/// Parallax is always positive (makes the body appear higher).
+///
+/// # Arguments
+/// * `horizontal_parallax` - Horizontal parallax in degrees (from almanac)
+/// * `apparent_altitude` - Apparent altitude in degrees
+///
+/// # Returns
+/// Parallax correction in degrees (always positive or zero)
+///
+/// # Examples
+/// ```
+/// use celtnav::sight_reduction::apply_parallax_correction;
+///
+/// // Moon's horizontal parallax is approximately 57 arcminutes (0.95°)
+/// let correction = apply_parallax_correction(0.95, 30.0);
+/// assert!(correction > 0.0); // Parallax is always positive
+/// ```
+pub fn apply_parallax_correction(horizontal_parallax: f64, apparent_altitude: f64) -> f64 {
+    if horizontal_parallax == 0.0 {
+        return 0.0;
+    }
+
+    // Parallax = HP * cos(altitude)
+    horizontal_parallax * apparent_altitude.to_radians().cos()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sight_data_creation() {
+        let sight = SightData {
+            latitude: 40.0,
+            declination: 20.0,
+            local_hour_angle: 30.0,
+        };
+        assert_eq!(sight.latitude, 40.0);
+        assert_eq!(sight.declination, 20.0);
+        assert_eq!(sight.local_hour_angle, 30.0);
+    }
+
+    #[test]
+    fn test_altitude_corrections_creation() {
+        let corrections = AltitudeCorrections {
+            refraction: -0.1,
+            dip: -0.05,
+            semidiameter: 0.267,
+            parallax: 0.5,
+        };
+        assert_eq!(corrections.refraction, -0.1);
+        assert_eq!(corrections.dip, -0.05);
+    }
+
+    #[test]
+    fn test_refraction_always_negative() {
+        let altitudes = vec![0.0, 15.0, 30.0, 45.0, 60.0, 75.0];
+        for alt in altitudes {
+            let correction = apply_refraction_correction(alt);
+            assert!(correction < 0.0,
+                    "Refraction should always be negative, got {} for altitude {}",
+                    correction, alt);
+        }
+    }
+
+    #[test]
+    fn test_dip_always_negative_or_zero() {
+        let heights = vec![0.0, 5.0, 10.0, 20.0, 50.0];
+        for height in heights {
+            let correction = apply_dip_correction(height);
+            assert!(correction <= 0.0,
+                    "Dip should always be negative or zero, got {} for height {}",
+                    correction, height);
+        }
+    }
+
+    #[test]
+    fn test_parallax_always_positive_or_zero() {
+        let hp = 0.95; // Moon's HP
+        let altitudes = vec![0.0, 30.0, 60.0, 90.0];
+        for alt in altitudes {
+            let correction = apply_parallax_correction(hp, alt);
+            assert!(correction >= 0.0,
+                    "Parallax should always be positive or zero, got {} for altitude {}",
+                    correction, alt);
+        }
+    }
+}

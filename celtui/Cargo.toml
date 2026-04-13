@@ -1,0 +1,15 @@
+[package]
+name = "celtui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+ratatui = "0.28"
+crossterm = "0.28"
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+celtnav = { path = "../celtnav" }
