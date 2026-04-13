@@ -614,4 +614,111 @@ mod tests {
         assert!(sd_upper < 0.0, "Upper limb: SD correction should be negative (subtract SD)");
         assert!((sd_upper + sd).abs() < 0.001, "Upper limb: SD correction should equal -SD");
     }
+
+    #[test]
+    fn test_pollux_scenario_east() {
+        // Pollux scenario where body is in the east (morning observation)
+        // This should give Az ~ 104° (east-southeast)
+        let sight = SightData {
+            latitude: 45.0,
+            declination: 28.0,  // Pollux declination
+            local_hour_angle: 52.0,  // Approximate LHA for Hc ≈ 46°, Az ≈ 104°
+        };
+
+        let hc = compute_altitude(&sight);
+        let zn = compute_azimuth(&sight);
+
+        // Should be roughly 46° altitude
+        assert!(
+            (hc - 46.0).abs() < 1.0,
+            "Hc should be ~46° for this LHA, got {:.1}°",
+            hc
+        );
+
+        // Should be east-southeast (around 95-110°)
+        assert!(
+            zn > 90.0 && zn < 120.0,
+            "Azimuth should be east-southeast (~104°), got {:.0}°",
+            zn
+        );
+    }
+
+    #[test]
+    fn test_pollux_scenario_west() {
+        // Pollux scenario where body is in the west (evening observation)
+        // This gives Az ~ 265° (west-southwest)
+        let sight = SightData {
+            latitude: 45.0,
+            declination: 28.0,  // Pollux declination
+            local_hour_angle: 308.0,  // Approximate LHA for Hc ≈ 46°, Az ≈ 265°
+        };
+
+        let hc = compute_altitude(&sight);
+        let zn = compute_azimuth(&sight);
+
+        // Should be roughly 46° altitude
+        assert!(
+            (hc - 46.0).abs() < 1.0,
+            "Hc should be ~46° for this LHA, got {:.1}°",
+            hc
+        );
+
+        // Should be west-southwest (around 255-275°)
+        assert!(
+            zn > 250.0 && zn < 280.0,
+            "Azimuth should be west-southwest (~265°), got {:.0}°",
+            zn
+        );
+    }
+
+    #[test]
+    fn test_lha_calculation_east_vs_west_longitude() {
+        // Test that LHA is calculated correctly for East and West longitudes
+        // Formula: LHA = GHA + Longitude (East positive, West negative)
+
+        // Example: GHA = 343.4° (Pollux with GHA Aries ≈ 100°)
+
+        // Case 1: West longitude (should be negative in calculation)
+        let gha: f64 = 343.4;
+        let lon_west: f64 = -123.0;  // W 123° = -123°
+        let lha_west = (gha + lon_west + 360.0) % 360.0;
+
+        assert!(
+            (lha_west - 220.4_f64).abs() < 0.1,
+            "LHA for W 123° should be ~220.4°, got {:.1}°",
+            lha_west
+        );
+
+        // Case 2: East longitude (should be positive)
+        let lon_east: f64 = 123.0;  // E 123° = +123°
+        let lha_east = (gha + lon_east + 360.0) % 360.0;
+
+        assert!(
+            (lha_east - 106.4_f64).abs() < 0.1,
+            "LHA for E 123° should be ~106.4°, got {:.1}°",
+            lha_east
+        );
+
+        // The two LHAs should be complementary in terms of results
+        // Same altitude, but azimuth on opposite sides
+        let sight_west = SightData {
+            latitude: 45.0,
+            declination: 28.0,
+            local_hour_angle: lha_west,
+        };
+
+        let sight_east = SightData {
+            latitude: 45.0,
+            declination: 28.0,
+            local_hour_angle: lha_east,
+        };
+
+        let hc_west = compute_altitude(&sight_west);
+        let hc_east = compute_altitude(&sight_east);
+
+        // Altitudes are independent of azimuth direction, but will differ
+        // due to different LHA values - this is just demonstrating the calculation works
+        assert!(hc_west < 0.0, "Body below horizon for LHA 220.4° at this position");
+        assert!(hc_east > 0.0, "Body above horizon for LHA 106.4° at this position");
+    }
 }

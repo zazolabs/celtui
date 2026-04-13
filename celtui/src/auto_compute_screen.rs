@@ -1621,75 +1621,54 @@ fn render_lop_column(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData],
             ),
         ]));
 
-        // Chosen position - split into two lines for readability
+        // Chosen position - combined on one line
         lop_lines.push(Line::from(vec![
             Span::styled("  Chosen: ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                format!("{} {:02}° {:05.2}'", lat_sign, lat_dms.degrees, lat_dms.minutes),
-                Style::default().fg(Color::White)
-            ),
-        ]));
-        lop_lines.push(Line::from(vec![
-            Span::styled("          ", Style::default()),
-            Span::styled(
-                format!("{} {:03}° {:05.2}'", lon_sign, lon_dms.degrees, lon_dms.minutes),
+                format!("{} {:02}° {:05.2}', {} {:03}° {:05.2}'",
+                    lat_sign, lat_dms.degrees, lat_dms.minutes,
+                    lon_sign, lon_dms.degrees, lon_dms.minutes),
                 Style::default().fg(Color::White)
             ),
         ]));
 
-        // Ho (Observed altitude after corrections)
+        // Ho, GHA, LHA on one line
         lop_lines.push(Line::from(vec![
-            Span::styled("  Ho:  ", Style::default().fg(Color::Cyan)),
+            Span::styled("  Ho: ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                format!("{:02}° {:05.2}'", ho_dms.degrees, ho_dms.minutes),
+                format!("{:02}° {:04.1}'", ho_dms.degrees, ho_dms.minutes),
                 Style::default().fg(Color::White)
             ),
-        ]));
-
-        // GHA (Greenwich Hour Angle)
-        lop_lines.push(Line::from(vec![
             Span::styled("  GHA: ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                format!("{:03}° {:05.2}'", gha_dms.degrees, gha_dms.minutes),
+                format!("{:03}° {:04.1}'", gha_dms.degrees, gha_dms.minutes),
                 Style::default().fg(Color::White)
             ),
-        ]));
-
-        // LHA (Local Hour Angle - should be whole number)
-        lop_lines.push(Line::from(vec![
             Span::styled("  LHA: ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                format!("{:03}° {:05.2}'", lha_dms.degrees, lha_dms.minutes),
+                format!("{:03}° {:04.1}'", lha_dms.degrees, lha_dms.minutes),
                 Style::default().fg(Color::White)
             ),
         ]));
 
-        // Hc (Calculated altitude)
-        lop_lines.push(Line::from(vec![
-            Span::styled("  Hc:  ", Style::default().fg(Color::Cyan)),
-            Span::styled(
-                format!("{:02}° {:05.2}'", hc_dms.degrees, hc_dms.minutes),
-                Style::default().fg(Color::White)
-            ),
-        ]));
-
-        // Intercept with color coding
+        // Hc, Intercept, and Azimuth on one line
         let intercept_color = if lop.intercept >= 0.0 {
             Color::Green
         } else {
             Color::Red
         };
         lop_lines.push(Line::from(vec![
+            Span::styled("  Hc: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:02}° {:04.1}'", hc_dms.degrees, hc_dms.minutes),
+                Style::default().fg(Color::White)
+            ),
             Span::styled("  Int: ", Style::default().fg(Color::Cyan)),
             Span::styled(
                 lop.intercept_with_direction(),
                 Style::default().fg(intercept_color)
             ),
-        ]));
-
-        // Azimuth
-        lop_lines.push(Line::from(vec![
-            Span::styled("  Az:  ", Style::default().fg(Color::Cyan)),
+            Span::styled("  Az: ", Style::default().fg(Color::Cyan)),
             Span::styled(
                 format!("{:03.0}° T", lop.azimuth),
                 Style::default().fg(Color::White)

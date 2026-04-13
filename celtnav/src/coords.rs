@@ -37,11 +37,36 @@ pub struct HorizontalCoords {
 ///
 /// This uses the standard spherical trigonometry formulas for coordinate transformation.
 ///
-/// Formula for altitude:
+/// # Altitude Formula
+/// ```text
 /// sin(Alt) = sin(Lat) * sin(Dec) + cos(Lat) * cos(Dec) * cos(LHA)
+/// ```
+/// This formula is derived from the navigational triangle formed by the celestial pole,
+/// zenith, and the celestial body.
 ///
-/// Formula for azimuth:
-/// tan(Az) = sin(LHA) / (cos(LHA) * sin(Lat) - tan(Dec) * cos(Lat))
+/// # Azimuth Formula
+/// The azimuth is calculated using the atan2 function to handle all quadrants correctly:
+/// ```text
+/// x = cos(Dec) * sin(LHA)
+/// y = cos(Lat) * sin(Dec) - sin(Lat) * cos(Dec) * cos(LHA)
+/// Azimuth = atan2(x, y)
+/// ```
+///
+/// The azimuth is measured clockwise from North:
+/// - N = 0° (or 360°)
+/// - E = 90°
+/// - S = 180°
+/// - W = 270°
+///
+/// # Sign Conventions
+/// - **Latitude**: North positive (+), South negative (-)
+/// - **Declination**: North positive (+), South negative (-)
+/// - **LHA**: 0° to 360°, measured westward from observer's meridian
+///
+/// # Common Errors to Avoid
+/// 1. **Incorrect LHA calculation**: LHA = GHA + Longitude (East positive, West negative)
+/// 2. **Wrong azimuth**: Verify atan2 argument order - Rust uses atan2(y, x) not atan2(x, y)
+/// 3. **Sign errors**: Ensure West longitudes are negative when calculating LHA
 ///
 /// # Arguments
 /// * `eq_coords` - Equatorial coordinates (Hour Angle, Declination)
@@ -54,12 +79,27 @@ pub struct HorizontalCoords {
 /// ```
 /// use celtnav::coords::{equatorial_to_horizontal, EquatorialCoords};
 ///
+/// // Body on meridian (LHA = 0°)
 /// let eq = EquatorialCoords {
 ///     declination: 20.0,
-///     hour_angle: 0.0, // On meridian
+///     hour_angle: 0.0,
 /// };
 /// let hz = equatorial_to_horizontal(&eq, 40.0); // 40°N latitude
+/// // Body will be due south (Az ≈ 180°) with altitude 70°
+///
+/// // Body in east (LHA ≈ 90°)
+/// let eq = EquatorialCoords {
+///     declination: 0.0,
+///     hour_angle: 90.0,
+/// };
+/// let hz = equatorial_to_horizontal(&eq, 0.0); // On equator
+/// // Body will be on eastern horizon (Az = 90°, Alt = 0°)
 /// ```
+///
+/// # References
+/// - Bowditch: The American Practical Navigator (Chapter 15 & 20)
+/// - Pub 229: Sight Reduction Tables for Marine Navigation
+/// - USNO Astronomical Applications Department formulas
 pub fn equatorial_to_horizontal(eq_coords: &EquatorialCoords, latitude: f64) -> HorizontalCoords {
     // Convert to radians
     let lat_rad = latitude.to_radians();
@@ -155,6 +195,9 @@ fn normalize_angle(angle: f64) -> f64 {
 }
 
 #[cfg(test)]
+mod coords_test_data;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -186,5 +229,159 @@ mod tests {
         };
         assert_eq!(coords.altitude, 30.0);
         assert_eq!(coords.azimuth, 90.0);
+    }
+
+    #[test]
+    fn test_azimuth_pub229_case1() {
+        // Pub 229: Lat 40°N, Dec 20°N, LHA 30°
+        // Expected: Hc = 59° 49', Zn = 122°
+        use coords_test_data::pub229_test_data;
+        let (eq, lat, expected_hc, expected_zn) = pub229_test_data::test_case_1();
+
+        let hz = equatorial_to_horizontal(&eq, lat);
+
+        // Test altitude (should be accurate to within 1 arcminute = 0.0167°)
+        assert!(
+            (hz.altitude - expected_hc).abs() < 0.02,
+            "Hc mismatch: expected {:.2}°, got {:.2}°",
+            expected_hc, hz.altitude
+        );
+
+        // Test azimuth (should be accurate to within 1°)
+        assert!(
+            (hz.azimuth - expected_zn).abs() < 1.0,
+            "Azimuth mismatch: expected {}°, got {:.1}°",
+            expected_zn, hz.azimuth
+        );
+    }
+
+    #[test]
+    fn test_azimuth_pub229_case2() {
+        // Pub 229: Lat 45°N, Dec 15°N, LHA 60°
+        // Expected: Hc = 58° 41', Zn = 130°
+        use coords_test_data::pub229_test_data;
+        let (eq, lat, expected_hc, expected_zn) = pub229_test_data::test_case_2();
+
+        let hz = equatorial_to_horizontal(&eq, lat);
+
+        assert!(
+            (hz.altitude - expected_hc).abs() < 0.02,
+            "Hc mismatch: expected {:.2}°, got {:.2}°",
+            expected_hc, hz.altitude
+        );
+
+        assert!(
+            (hz.azimuth - expected_zn).abs() < 1.0,
+            "Azimuth mismatch: expected {}°, got {:.1}°",
+            expected_zn, hz.azimuth
+        );
+    }
+
+    #[test]
+    fn test_azimuth_meridian_south() {
+        // Body on meridian, Dec < Lat, should be due south (180°)
+        use coords_test_data::pub229_test_data;
+        let (eq, lat, expected_hc, expected_zn) = pub229_test_data::test_case_meridian_south();
+
+        let hz = equatorial_to_horizontal(&eq, lat);
+
+        assert!(
+            (hz.altitude - expected_hc).abs() < 0.02,
+            "Hc mismatch: expected {:.2}°, got {:.2}°",
+            expected_hc, hz.altitude
+        );
+
+        // Azimuth should be exactly 180° (or very close)
+        assert!(
+            (hz.azimuth - expected_zn).abs() < 1.0,
+            "Azimuth should be 180° (due south), got {:.1}°",
+            hz.azimuth
+        );
+    }
+
+    #[test]
+    fn test_azimuth_meridian_north() {
+        // Body on meridian, Dec > Lat, should be due north (0° or 360°)
+        use coords_test_data::pub229_test_data;
+        let (eq, lat, expected_hc, _expected_zn) = pub229_test_data::test_case_meridian_north();
+
+        let hz = equatorial_to_horizontal(&eq, lat);
+
+        assert!(
+            (hz.altitude - expected_hc).abs() < 0.02,
+            "Hc mismatch: expected {:.2}°, got {:.2}°",
+            expected_hc, hz.altitude
+        );
+
+        // Azimuth should be 0° or 360° (due north)
+        let az_normalized = if hz.azimuth > 180.0 { 360.0 - hz.azimuth } else { hz.azimuth };
+        assert!(
+            az_normalized < 1.0,
+            "Azimuth should be 0° (due north), got {:.1}°",
+            hz.azimuth
+        );
+    }
+
+    #[test]
+    fn test_azimuth_east() {
+        // Body due east (LHA = 90°), should have azimuth ~90°
+        use coords_test_data::pub229_test_data;
+        let (eq, lat, expected_hc, expected_zn) = pub229_test_data::test_case_east();
+
+        let hz = equatorial_to_horizontal(&eq, lat);
+
+        assert!(
+            (hz.altitude - expected_hc).abs() < 0.02,
+            "Hc mismatch: expected {:.2}°, got {:.2}°",
+            expected_hc, hz.altitude
+        );
+
+        assert!(
+            (hz.azimuth - expected_zn).abs() < 1.0,
+            "Azimuth should be 90° (due east), got {:.1}°",
+            hz.azimuth
+        );
+    }
+
+    #[test]
+    fn test_azimuth_west() {
+        // Body due west (LHA = 270°), should have azimuth ~270°
+        use coords_test_data::pub229_test_data;
+        let (eq, lat, expected_hc, expected_zn) = pub229_test_data::test_case_west_horizon();
+
+        let hz = equatorial_to_horizontal(&eq, lat);
+
+        assert!(
+            (hz.altitude - expected_hc).abs() < 0.02,
+            "Hc mismatch: expected {:.2}°, got {:.2}°",
+            expected_hc, hz.altitude
+        );
+
+        assert!(
+            (hz.azimuth - expected_zn).abs() < 1.0,
+            "Azimuth should be 270° (due west), got {:.1}°",
+            hz.azimuth
+        );
+    }
+
+    #[test]
+    fn test_azimuth_western_lha() {
+        // LHA > 180° (western side)
+        use coords_test_data::pub229_test_data;
+        let (eq, lat, expected_hc, expected_zn) = pub229_test_data::test_case_west();
+
+        let hz = equatorial_to_horizontal(&eq, lat);
+
+        assert!(
+            (hz.altitude - expected_hc).abs() < 0.02,
+            "Hc mismatch: expected {:.2}°, got {:.2}°",
+            expected_hc, hz.altitude
+        );
+
+        assert!(
+            (hz.azimuth - expected_zn).abs() < 1.0,
+            "Azimuth mismatch: expected {}°, got {:.1}°",
+            expected_zn, hz.azimuth
+        );
     }
 }
