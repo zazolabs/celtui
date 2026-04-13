@@ -16,7 +16,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Row, Table, Wrap},
     Frame,
 };
 use serde::{Deserialize, Serialize};
@@ -1441,210 +1441,49 @@ fn render_sights_list(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
 }
 
 fn render_fix_results(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
-    // If we have both a fix and a message, split the area to show both
-    if let Some(fix) = &form.fix_result {
-        // Calculate heights for LOP display
-        let lop_lines_height = if !form.lop_data.is_empty() {
-            // 2 for header + border, then 5 lines per LOP (body, chosen pos, hc, intercept, azimuth + blank line)
-            2 + (form.lop_data.len() * 6).min(30) as u16
-        } else {
-            0
-        };
+    if let Some(error) = &form.error_message {
+        // Show status message at the top if present
+        if let Some(fix) = &form.fix_result {
+            // Split area: status message at top, then two-pane layout below
+            let vertical_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(4),  // Status message
+                    Constraint::Min(0),     // Two-pane layout
+                ])
+                .split(area);
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(12),  // Fix display (fixed size)
-                Constraint::Length(lop_lines_height),  // LOP display (variable)
-                Constraint::Length(if form.error_message.is_some() { 4 } else { 0 }),   // Status message
-                Constraint::Min(0),      // Remaining space
-            ])
-            .split(area);
-
-        // Render prominent fix display
-        let lat_sign = if fix.position.latitude >= 0.0 { "N" } else { "S" };
-        let lat_dms = celtnav::decimal_to_dms(fix.position.latitude.abs());
-
-        let lon_sign = if fix.position.longitude >= 0.0 { "E" } else { "W" };
-        let lon_dms = celtnav::decimal_to_dms(fix.position.longitude.abs());
-
-        let mut lines = vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("═══ FIX COMPUTED ═══",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD)),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("Position:  ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!("{} {:02}° {:05.2}' {}", lat_sign, lat_dms.degrees, lat_dms.minutes, lat_sign),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("           ", Style::default()),
-                Span::styled(
-                    format!("{} {:03}° {:05.2}' {}", lon_sign, lon_dms.degrees, lon_dms.minutes, lon_sign),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("Sights Used: ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!("{}", fix.num_lops),
-                    Style::default().fg(Color::White),
-                ),
-            ]),
-        ];
-
-        if let Some(accuracy) = fix.accuracy_estimate {
-            lines.push(Line::from(vec![
-                Span::styled("Accuracy:    ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!("{:.1} NM", accuracy),
-                    Style::default().fg(Color::White),
-                ),
-            ]));
-        }
-
-        let fix_widget = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .title(" ★ CALCULATED FIX ★ ")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            )
-            .alignment(Alignment::Center);
-
-        frame.render_widget(fix_widget, chunks[0]);
-
-        // Render LOP data if available
-        if !form.lop_data.is_empty() && chunks[1].height > 0 {
-            let mut lop_lines = vec![
-                Line::from(vec![
-                    Span::styled("═══ LINES OF POSITION ═══",
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD)),
-                ]),
-                Line::from(""),
-            ];
-
-            for (i, lop) in form.lop_data.iter().enumerate() {
-                let lat_sign = if lop.chosen_lat >= 0.0 { "N" } else { "S" };
-                let lat_dms = celtnav::decimal_to_dms(lop.chosen_lat.abs());
-
-                let lon_sign = if lop.chosen_lon >= 0.0 { "E" } else { "W" };
-                let lon_dms = celtnav::decimal_to_dms(lop.chosen_lon.abs());
-
-                let hc_dms = celtnav::decimal_to_dms(lop.hc.abs());
-
-                // Determine intercept color (green for toward, red for away)
-                let intercept_color = if lop.intercept >= 0.0 {
-                    Color::Green
-                } else {
-                    Color::Red
-                };
-
-                lop_lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("Sight {}: ", i + 1),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                    ),
-                    Span::styled(
-                        &lop.body_name,
-                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
-                    ),
-                ]));
-
-                lop_lines.push(Line::from(vec![
-                    Span::styled("  Chosen Position: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        format!("{} {:02}° {:05.2}' {}, {} {:03}° {:05.2}' {}",
-                            lat_sign, lat_dms.degrees, lat_dms.minutes, lat_sign,
-                            lon_sign, lon_dms.degrees, lon_dms.minutes, lon_sign),
-                        Style::default().fg(Color::White)
-                    ),
-                ]));
-
-                lop_lines.push(Line::from(vec![
-                    Span::styled("  Hc: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        format!("{:02}° {:05.2}'", hc_dms.degrees, hc_dms.minutes),
-                        Style::default().fg(Color::White)
-                    ),
-                ]));
-
-                lop_lines.push(Line::from(vec![
-                    Span::styled("  Intercept: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        lop.intercept_with_direction(),
-                        Style::default().fg(intercept_color)
-                    ),
-                ]));
-
-                lop_lines.push(Line::from(vec![
-                    Span::styled("  Azimuth: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        format!("{:03.0}° T", lop.azimuth),
-                        Style::default().fg(Color::White)
-                    ),
-                ]));
-
-                // Add blank line between LOPs (except after the last one)
-                if i < form.lop_data.len() - 1 {
-                    lop_lines.push(Line::from(""));
-                }
-            }
-
-            let lop_widget = Paragraph::new(lop_lines)
+            let paragraph = Paragraph::new(error.clone())
+                .style(Style::default().fg(Color::Yellow))
                 .block(
                     Block::default()
-                        .title(" LOP Data for Chart Plotting ")
+                        .title(" Status ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Cyan)),
-                );
+                        .border_style(Style::default().fg(Color::Blue)),
+                )
+                .wrap(Wrap { trim: true });
 
-            frame.render_widget(lop_widget, chunks[1]);
+            frame.render_widget(paragraph, vertical_chunks[0]);
+
+            // Render two-pane layout in remaining space
+            render_two_pane_layout(frame, vertical_chunks[1], form, fix);
+        } else {
+            // No fix, just show error
+            let paragraph = Paragraph::new(error.clone())
+                .style(Style::default().fg(Color::Yellow))
+                .block(
+                    Block::default()
+                        .title(" Status ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Blue)),
+                )
+                .wrap(Wrap { trim: true });
+
+            frame.render_widget(paragraph, area);
         }
-
-        // Render status message if present
-        if let Some(error) = &form.error_message {
-            if chunks[2].height > 0 {
-                let paragraph = Paragraph::new(error.clone())
-                    .style(Style::default().fg(Color::Yellow))
-                    .block(
-                        Block::default()
-                            .title(" Status ")
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(Color::Blue)),
-                    )
-                    .wrap(Wrap { trim: true });
-
-                frame.render_widget(paragraph, chunks[2]);
-            }
-        }
-    } else if let Some(error) = &form.error_message {
-        // Only show status message if there's no fix
-        let paragraph = Paragraph::new(error.clone())
-            .style(Style::default().fg(Color::Yellow))
-            .block(
-                Block::default()
-                    .title(" Status ")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Blue)),
-            )
-            .wrap(Wrap { trim: true });
-
-        frame.render_widget(paragraph, area);
+    } else if let Some(fix) = &form.fix_result {
+        // No error message, just render the two-pane layout
+        render_two_pane_layout(frame, area, form, fix);
     } else {
         // No fix and no message - show instructions
         let text = "Enter 2 or more sights, then press 'C' to compute fix";
@@ -1660,6 +1499,179 @@ fn render_fix_results(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
 
         frame.render_widget(paragraph, area);
     }
+}
+
+/// Renders the two-pane layout: LOPs on left, Fix on right
+fn render_two_pane_layout(frame: &mut Frame, area: Rect, form: &AutoComputeForm, fix: &Fix) {
+    // Split horizontally into left and right panes
+    let horizontal_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),  // Left pane: LOPs
+            Constraint::Percentage(50),  // Right pane: Fix
+        ])
+        .split(area);
+
+    // Render LOPs in left pane
+    render_lop_pane(frame, horizontal_chunks[0], &form.lop_data);
+
+    // Render fix in right pane
+    render_fix_pane(frame, horizontal_chunks[1], fix);
+}
+
+/// Renders the LOP data in the left pane
+fn render_lop_pane(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData]) {
+    if lop_data.is_empty() {
+        let text = "No LOP data available";
+        let paragraph = Paragraph::new(text)
+            .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC))
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .title(" Lines of Position ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Blue)),
+            );
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
+    let mut lop_lines = Vec::new();
+
+    for (i, lop) in lop_data.iter().enumerate() {
+        let lat_sign = if lop.chosen_lat >= 0.0 { "N" } else { "S" };
+        let lat_dms = celtnav::decimal_to_dms(lop.chosen_lat.abs());
+
+        let lon_sign = if lop.chosen_lon >= 0.0 { "E" } else { "W" };
+        let lon_dms = celtnav::decimal_to_dms(lop.chosen_lon.abs());
+
+        let hc_dms = celtnav::decimal_to_dms(lop.hc.abs());
+
+        // Sight header
+        lop_lines.push(Line::from(vec![
+            Span::styled(
+                format!("Sight {}: ", i + 1),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            ),
+            Span::styled(
+                &lop.body_name,
+                Style::default().fg(Color::White)
+            ),
+        ]));
+
+        // Chosen position - split into two lines for readability
+        lop_lines.push(Line::from(vec![
+            Span::styled("  Chosen Pos: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{} {:02}° {:05.2}'", lat_sign, lat_dms.degrees, lat_dms.minutes),
+                Style::default().fg(Color::White)
+            ),
+        ]));
+        lop_lines.push(Line::from(vec![
+            Span::styled("              ", Style::default()),
+            Span::styled(
+                format!("{} {:03}° {:05.2}'", lon_sign, lon_dms.degrees, lon_dms.minutes),
+                Style::default().fg(Color::White)
+            ),
+        ]));
+
+        // Hc
+        lop_lines.push(Line::from(vec![
+            Span::styled("  Hc: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:02}° {:05.2}'", hc_dms.degrees, hc_dms.minutes),
+                Style::default().fg(Color::White)
+            ),
+        ]));
+
+        // Intercept with color coding
+        let intercept_color = if lop.intercept >= 0.0 {
+            Color::Green
+        } else {
+            Color::Red
+        };
+        lop_lines.push(Line::from(vec![
+            Span::styled("  Intercept: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                lop.intercept_with_direction(),
+                Style::default().fg(intercept_color)
+            ),
+        ]));
+
+        // Azimuth
+        lop_lines.push(Line::from(vec![
+            Span::styled("  Azimuth: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:03.0}° T", lop.azimuth),
+                Style::default().fg(Color::White)
+            ),
+        ]));
+
+        // Blank line between sights
+        if i < lop_data.len() - 1 {
+            lop_lines.push(Line::from(""));
+        }
+    }
+
+    let lop_widget = Paragraph::new(lop_lines)
+        .block(
+            Block::default()
+                .title(" Lines of Position ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue)),
+        );
+
+    frame.render_widget(lop_widget, area);
+}
+
+/// Renders the fix data in the right pane using a simple table format
+fn render_fix_pane(frame: &mut Frame, area: Rect, fix: &Fix) {
+    let lat_sign = if fix.position.latitude >= 0.0 { "N" } else { "S" };
+    let lat_dms = celtnav::decimal_to_dms(fix.position.latitude.abs());
+
+    let lon_sign = if fix.position.longitude >= 0.0 { "E" } else { "W" };
+    let lon_dms = celtnav::decimal_to_dms(fix.position.longitude.abs());
+
+    let mut rows = vec![
+        Row::new(vec!["Fix Position".to_string(), "".to_string()]),
+        Row::new(vec![
+            "Latitude".to_string(),
+            format!("{} {:02}° {:05.2}'", lat_sign, lat_dms.degrees, lat_dms.minutes),
+        ]),
+        Row::new(vec![
+            "Longitude".to_string(),
+            format!("{} {:03}° {:05.2}'", lon_sign, lon_dms.degrees, lon_dms.minutes),
+        ]),
+        Row::new(vec!["Number of LOPs".to_string(), fix.num_lops.to_string()]),
+    ];
+
+    if let Some(accuracy) = fix.accuracy_estimate {
+        rows.push(Row::new(vec![
+            "Accuracy Estimate".to_string(),
+            format!("{:.1} NM", accuracy),
+        ]));
+    }
+
+    let table = Table::new(rows, [Constraint::Percentage(50), Constraint::Percentage(50)])
+        .header(
+            Row::new(vec!["Parameter", "Value"])
+                .style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .bottom_margin(1),
+        )
+        .block(
+            Block::default()
+                .title(" Calculated Fix ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue)),
+        )
+        .style(Style::default().fg(Color::White))
+        .column_spacing(2);
+
+    frame.render_widget(table, area);
 }
 
 #[cfg(test)]
