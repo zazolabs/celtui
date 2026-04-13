@@ -858,11 +858,6 @@ impl AutoComputeForm {
                     AutoComputeMode::EditingRunningFix
                 };
             }
-            KeyCode::Char('d') | KeyCode::Char('D') => {
-                if self.mode == AutoComputeMode::ViewingSights {
-                    self.delete_selected_sight();
-                }
-            }
             KeyCode::F(2) => {
                 // Save sights
                 match self.save_sights() {
@@ -1010,6 +1005,12 @@ impl AutoComputeForm {
                             }
                         }
                     }
+                    AutoComputeMode::ViewingSights => {
+                        // In viewing mode, 'D' deletes the selected sight
+                        if c == 'd' || c == 'D' {
+                            self.delete_selected_sight();
+                        }
+                    }
                     AutoComputeMode::EditingRunningFix => {
                         if c.is_ascii_digit() || c == '.' {
                             match self.running_fix_field {
@@ -1022,7 +1023,6 @@ impl AutoComputeForm {
                             }
                         }
                     }
-                    _ => {}
                 }
             }
             KeyCode::Backspace => {
@@ -1885,6 +1885,86 @@ mod tests {
             // Message should mention running fix or advancement
             assert!(msg.contains("advanced") || msg.contains("Running fix") || msg.contains("Fix computed"));
         }
+    }
+
+    // TDD tests for Issue 1: "D" key should type in StarName field
+
+    #[test]
+    fn test_d_key_types_in_star_name_field() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::StarName;
+        form.current_sight.body = SightCelestialBody::Star(String::new());
+
+        // Typing "D" should add 'D' to star name
+        let key_event = KeyEvent::from(KeyCode::Char('D'));
+        form.handle_key_event(key_event);
+
+        if let SightCelestialBody::Star(name) = &form.current_sight.body {
+            assert_eq!(name, "D", "'D' should be typed into StarName field");
+        } else {
+            panic!("Expected Star body");
+        }
+    }
+
+    #[test]
+    fn test_d_key_types_deneb_star_name() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::StarName;
+        form.current_sight.body = SightCelestialBody::Star(String::new());
+
+        // Simulate typing "Deneb"
+        for ch in "Deneb".chars() {
+            let key_event = KeyEvent::from(KeyCode::Char(ch));
+            form.handle_key_event(key_event);
+        }
+
+        if let SightCelestialBody::Star(name) = &form.current_sight.body {
+            assert_eq!(name, "Deneb", "Should type 'Deneb' including the 'D'");
+        } else {
+            panic!("Expected Star body");
+        }
+    }
+
+    #[test]
+    fn test_d_key_deletes_sight_in_viewing_mode() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::ViewingSights;
+
+        // Add a sight to delete
+        let mut sight = Sight::new();
+        sight.body = SightCelestialBody::Sun;
+        sight.date = "2024-01-15".to_string();
+        form.sights.push(sight);
+        form.selected_sight_index = Some(0);
+
+        // Press 'D' to delete
+        let key_event = KeyEvent::from(KeyCode::Char('D'));
+        form.handle_key_event(key_event);
+
+        // Sight should be deleted
+        assert_eq!(form.sights.len(), 0, "'D' should delete sight in ViewingSights mode");
+        assert_eq!(form.selected_sight_index, None);
+    }
+
+    #[test]
+    fn test_d_key_does_not_delete_when_entering_sight() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::Date;
+
+        // Add a sight
+        let mut sight = Sight::new();
+        sight.body = SightCelestialBody::Sun;
+        form.sights.push(sight);
+
+        // Press 'D' while entering a sight (should not delete)
+        let key_event = KeyEvent::from(KeyCode::Char('D'));
+        form.handle_key_event(key_event);
+
+        // Sight should NOT be deleted
+        assert_eq!(form.sights.len(), 1, "'D' should not delete sight when in EnteringSight mode");
     }
 
     // Tests for Issue 2: Left/Right arrow key support for cycling

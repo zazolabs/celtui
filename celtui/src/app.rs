@@ -486,6 +486,196 @@ mod tests {
         assert_eq!(app.current_screen, initial_screen, "Should not switch screens when typing in text field");
     }
 
+    // TDD tests for Issue 1: "D" key should work in auto compute star name
+
+    #[test]
+    fn test_auto_compute_d_key_types_in_star_name() {
+        let mut app = App::new();
+        app.current_screen = Screen::AutoCompute;
+        app.auto_compute_form.mode = crate::auto_compute_screen::AutoComputeMode::EnteringSight;
+        app.auto_compute_form.current_field = crate::auto_compute_screen::SightInputField::StarName;
+        app.auto_compute_form.current_sight.body = crate::auto_compute_screen::SightCelestialBody::Star(String::new());
+
+        // Typing "D" should add 'D' to star name
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('D')));
+
+        if let crate::auto_compute_screen::SightCelestialBody::Star(name) = &app.auto_compute_form.current_sight.body {
+            assert_eq!(name, "D", "'D' should be typed into AutoCompute StarName field");
+        } else {
+            panic!("Expected Star body");
+        }
+    }
+
+    #[test]
+    fn test_auto_compute_d_key_types_deneb() {
+        let mut app = App::new();
+        app.current_screen = Screen::AutoCompute;
+        app.auto_compute_form.mode = crate::auto_compute_screen::AutoComputeMode::EnteringSight;
+        app.auto_compute_form.current_field = crate::auto_compute_screen::SightInputField::StarName;
+        app.auto_compute_form.current_sight.body = crate::auto_compute_screen::SightCelestialBody::Star(String::new());
+
+        // Typing "Deneb"
+        for ch in "Deneb".chars() {
+            app.handle_key_event(KeyEvent::from(KeyCode::Char(ch)));
+        }
+
+        if let crate::auto_compute_screen::SightCelestialBody::Star(name) = &app.auto_compute_form.current_sight.body {
+            assert_eq!(name, "Deneb", "Should type 'Deneb' in AutoCompute");
+        } else {
+            panic!("Expected Star body");
+        }
+    }
+
+    // TDD tests for Issue 2: Arrow keys should cycle in auto compute screen
+
+    #[test]
+    fn test_auto_compute_right_arrow_cycles_body() {
+        let mut app = App::new();
+        app.current_screen = Screen::AutoCompute;
+        app.auto_compute_form.mode = crate::auto_compute_screen::AutoComputeMode::EnteringSight;
+        app.auto_compute_form.current_field = crate::auto_compute_screen::SightInputField::Body;
+        app.auto_compute_form.current_sight.body = crate::auto_compute_screen::SightCelestialBody::Sun;
+
+        // Press Right arrow to cycle body
+        app.handle_key_event(KeyEvent::from(KeyCode::Right));
+
+        // Should cycle to Moon
+        assert_eq!(app.auto_compute_form.current_sight.body, crate::auto_compute_screen::SightCelestialBody::Moon,
+            "Right arrow should cycle body forward in AutoCompute screen");
+    }
+
+    #[test]
+    fn test_auto_compute_left_arrow_cycles_body() {
+        let mut app = App::new();
+        app.current_screen = Screen::AutoCompute;
+        app.auto_compute_form.mode = crate::auto_compute_screen::AutoComputeMode::EnteringSight;
+        app.auto_compute_form.current_field = crate::auto_compute_screen::SightInputField::Body;
+        app.auto_compute_form.current_sight.body = crate::auto_compute_screen::SightCelestialBody::Moon;
+
+        // Press Left arrow to cycle body backward
+        app.handle_key_event(KeyEvent::from(KeyCode::Left));
+
+        // Should cycle to Sun
+        assert_eq!(app.auto_compute_form.current_sight.body, crate::auto_compute_screen::SightCelestialBody::Sun,
+            "Left arrow should cycle body backward in AutoCompute screen");
+    }
+
+    #[test]
+    fn test_auto_compute_arrows_toggle_lat_direction() {
+        let mut app = App::new();
+        app.current_screen = Screen::AutoCompute;
+        app.auto_compute_form.mode = crate::auto_compute_screen::AutoComputeMode::EnteringSight;
+        app.auto_compute_form.current_field = crate::auto_compute_screen::SightInputField::LatDirection;
+        app.auto_compute_form.current_sight.lat_direction = 'N';
+
+        // Press Right arrow to toggle
+        app.handle_key_event(KeyEvent::from(KeyCode::Right));
+        assert_eq!(app.auto_compute_form.current_sight.lat_direction, 'S',
+            "Right arrow should toggle latitude direction");
+
+        // Press Left arrow to toggle back
+        app.handle_key_event(KeyEvent::from(KeyCode::Left));
+        assert_eq!(app.auto_compute_form.current_sight.lat_direction, 'N',
+            "Left arrow should toggle latitude direction");
+    }
+
+    #[test]
+    fn test_auto_compute_arrows_do_not_interfere_with_text_input() {
+        let mut app = App::new();
+        app.current_screen = Screen::AutoCompute;
+        app.auto_compute_form.mode = crate::auto_compute_screen::AutoComputeMode::EnteringSight;
+        app.auto_compute_form.current_field = crate::auto_compute_screen::SightInputField::Date;
+        app.auto_compute_form.current_sight.date = "2024".to_string();
+
+        // Press Left arrow (should not change date)
+        app.handle_key_event(KeyEvent::from(KeyCode::Left));
+        assert_eq!(app.auto_compute_form.current_sight.date, "2024",
+            "Left arrow should not affect text input fields");
+
+        // Press Right arrow (should not change date)
+        app.handle_key_event(KeyEvent::from(KeyCode::Right));
+        assert_eq!(app.auto_compute_form.current_sight.date, "2024",
+            "Right arrow should not affect text input fields");
+    }
+
+    // Comprehensive integration test for Issues 1 & 2
+
+    #[test]
+    fn test_comprehensive_auto_compute_star_entry_with_d_and_arrows() {
+        // Simulate a complete user journey: entering a star name like "Deneb"
+        // and using arrow keys to cycle fields
+        let mut app = App::new();
+        app.current_screen = Screen::AutoCompute;
+        app.auto_compute_form.mode = crate::auto_compute_screen::AutoComputeMode::EnteringSight;
+
+        // Start at Body field with Sun selected
+        app.auto_compute_form.current_field = crate::auto_compute_screen::SightInputField::Body;
+        app.auto_compute_form.current_sight.body = crate::auto_compute_screen::SightCelestialBody::Sun;
+
+        // Use Right arrow to cycle forward to Moon
+        app.handle_key_event(KeyEvent::from(KeyCode::Right));
+        assert_eq!(app.auto_compute_form.current_sight.body,
+            crate::auto_compute_screen::SightCelestialBody::Moon);
+
+        // Use Left arrow to cycle backward to Sun
+        app.handle_key_event(KeyEvent::from(KeyCode::Left));
+        assert_eq!(app.auto_compute_form.current_sight.body,
+            crate::auto_compute_screen::SightCelestialBody::Sun);
+
+        // Continue cycling to get to Star (Sun->Moon->Venus->Mars->Jupiter->Saturn->Star)
+        // We're at Sun, so need 6 more Right presses
+        for _ in 0..6 {
+            app.handle_key_event(KeyEvent::from(KeyCode::Right));
+        }
+        // Should now be at Star variant
+        assert!(matches!(app.auto_compute_form.current_sight.body,
+            crate::auto_compute_screen::SightCelestialBody::Star(_)),
+            "Should be at Star body after cycling, got: {:?}", app.auto_compute_form.current_sight.body);
+
+        // Tab to StarName field
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.auto_compute_form.current_field,
+            crate::auto_compute_screen::SightInputField::StarName);
+
+        // Type "Deneb" - testing that 'D' works
+        for ch in "Deneb".chars() {
+            app.handle_key_event(KeyEvent::from(KeyCode::Char(ch)));
+        }
+
+        if let crate::auto_compute_screen::SightCelestialBody::Star(name) =
+            &app.auto_compute_form.current_sight.body {
+            assert_eq!(name, "Deneb", "Should have typed 'Deneb' including the 'D'");
+        } else {
+            panic!("Expected Star body with name");
+        }
+
+        // Tab to Date field
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.auto_compute_form.current_field,
+            crate::auto_compute_screen::SightInputField::Date);
+
+        // Type a date
+        for ch in "2024-03-23".chars() {
+            app.handle_key_event(KeyEvent::from(KeyCode::Char(ch)));
+        }
+        assert_eq!(app.auto_compute_form.current_sight.date, "2024-03-23");
+
+        // Navigate through fields to LatDirection
+        while app.auto_compute_form.current_field != crate::auto_compute_screen::SightInputField::LatDirection {
+            app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        }
+
+        // Use arrows to toggle latitude direction
+        app.auto_compute_form.current_sight.lat_direction = 'N';
+        app.handle_key_event(KeyEvent::from(KeyCode::Right));
+        assert_eq!(app.auto_compute_form.current_sight.lat_direction, 'S',
+            "Arrow should toggle lat direction");
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Left));
+        assert_eq!(app.auto_compute_form.current_sight.lat_direction, 'N',
+            "Arrow should toggle lat direction back");
+    }
+
     #[test]
     fn test_comprehensive_user_journey_typing_star_name() {
         // This test simulates a user typing "Altair" in the star name field
