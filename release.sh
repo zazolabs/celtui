@@ -175,7 +175,9 @@ main() {
     echo "Skipping cargo check -q --workspace for an App"
 
     # 5. Commit the version bump
-    git add "$VERSION_FILE" "$CARGO_TOML" Cargo.lock
+    git add "$VERSION_FILE" "$CARGO_TOML" 
+    # Do not add Cargo.local for an app
+    # git add "$VERSION_FILE" "$CARGO_TOML" Cargo.lock
     git commit -m "chore: bump version to ${tag}"
     echo "[5/6] Committed version bump"
 
