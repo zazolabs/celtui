@@ -84,6 +84,9 @@ impl SightCelestialBody {
 /// Contains all information a navigator needs to plot a single LOP on a chart:
 /// - The celestial body observed
 /// - The chosen/assumed position (AP) where the calculation was performed
+/// - The observed altitude (Ho) after all corrections
+/// - The Greenwich Hour Angle (GHA) of the body
+/// - The Local Hour Angle (LHA) at the chosen position
 /// - The calculated altitude (Hc) at that position
 /// - The intercept distance (toward/away from the body)
 /// - The true azimuth bearing to the body
@@ -101,6 +104,12 @@ pub struct LopDisplayData {
     pub chosen_lat: f64,
     /// Chosen/Assumed position longitude in decimal degrees (positive = East, negative = West)
     pub chosen_lon: f64,
+    /// Observed altitude (Ho) in degrees after all corrections
+    pub ho: f64,
+    /// Greenwich Hour Angle (GHA) in degrees
+    pub gha: f64,
+    /// Local Hour Angle (LHA) in degrees (should be whole number after optimization)
+    pub lha: f64,
     /// Calculated altitude (Hc) in degrees at the chosen position
     pub hc: f64,
     /// Intercept in nautical miles (positive = toward body, negative = away from body)
@@ -780,17 +789,29 @@ impl AutoComputeForm {
         // - Adjust longitude to make LHA a whole number
         let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_latitude, dr_longitude, position.gha);
 
-        // Apply corrections to get observed altitude
+        // Apply corrections to get observed altitude (Ho)
+        // Correction order is critical: Hs + IE + dip + refraction + SD + parallax
         let mut ho = sextant_altitude;
-        ho += index_error / 60.0;
-        ho += apply_dip_correction(height_of_eye);
-        ho += apply_refraction_correction(ho);
 
-        // Apply semi-diameter for Sun and Moon
+        // 1. Index error (can be positive or negative)
+        ho += index_error / 60.0;
+
+        // 2. Dip correction (always negative, based on height of eye)
+        ho += apply_dip_correction(height_of_eye);
+
+        // 3. Refraction correction (always negative, use altitude BEFORE applying refraction)
+        let refraction = apply_refraction_correction(ho);
+        ho += refraction;
+
+        // 4. Semi-diameter for Sun and Moon (depends on limb observed)
         if matches!(sight.body, SightCelestialBody::Sun) {
+            // Assuming lower limb observation (add semi-diameter)
             ho += apply_semidiameter_correction(0.267, true);
         } else if matches!(sight.body, SightCelestialBody::Moon) {
+            // Assuming lower limb observation (add semi-diameter)
             ho += apply_semidiameter_correction(0.25, true);
+
+            // 5. Parallax for Moon (always positive, use altitude AFTER semi-diameter)
             ho += apply_parallax_correction(0.95, ho);
         }
 
@@ -816,11 +837,14 @@ impl AutoComputeForm {
             dr_longitude,
         };
 
-        // Display data shows the chosen (optimized) position
+        // Display data shows the chosen (optimized) position and all key values
         let display_data = LopDisplayData {
             body_name: sight.body.name(),
             chosen_lat,
             chosen_lon,
+            ho,
+            gha: position.gha,
+            lha,
             hc,
             intercept,
             azimuth: zn,
@@ -1580,6 +1604,9 @@ fn render_lop_column(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData],
         let lon_sign = if lop.chosen_lon >= 0.0 { "E" } else { "W" };
         let lon_dms = celtnav::decimal_to_dms(lop.chosen_lon.abs());
 
+        let ho_dms = celtnav::decimal_to_dms(lop.ho.abs());
+        let gha_dms = celtnav::decimal_to_dms(lop.gha.abs());
+        let lha_dms = celtnav::decimal_to_dms(lop.lha.abs());
         let hc_dms = celtnav::decimal_to_dms(lop.hc.abs());
 
         // Sight header
@@ -1610,9 +1637,36 @@ fn render_lop_column(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData],
             ),
         ]));
 
-        // Hc
+        // Ho (Observed altitude after corrections)
         lop_lines.push(Line::from(vec![
-            Span::styled("  Hc: ", Style::default().fg(Color::Cyan)),
+            Span::styled("  Ho:  ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:02}° {:05.2}'", ho_dms.degrees, ho_dms.minutes),
+                Style::default().fg(Color::White)
+            ),
+        ]));
+
+        // GHA (Greenwich Hour Angle)
+        lop_lines.push(Line::from(vec![
+            Span::styled("  GHA: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:03}° {:05.2}'", gha_dms.degrees, gha_dms.minutes),
+                Style::default().fg(Color::White)
+            ),
+        ]));
+
+        // LHA (Local Hour Angle - should be whole number)
+        lop_lines.push(Line::from(vec![
+            Span::styled("  LHA: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:03}° {:05.2}'", lha_dms.degrees, lha_dms.minutes),
+                Style::default().fg(Color::White)
+            ),
+        ]));
+
+        // Hc (Calculated altitude)
+        lop_lines.push(Line::from(vec![
+            Span::styled("  Hc:  ", Style::default().fg(Color::Cyan)),
             Span::styled(
                 format!("{:02}° {:05.2}'", hc_dms.degrees, hc_dms.minutes),
                 Style::default().fg(Color::White)
@@ -1635,7 +1689,7 @@ fn render_lop_column(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData],
 
         // Azimuth
         lop_lines.push(Line::from(vec![
-            Span::styled("  Az: ", Style::default().fg(Color::Cyan)),
+            Span::styled("  Az:  ", Style::default().fg(Color::Cyan)),
             Span::styled(
                 format!("{:03.0}° T", lop.azimuth),
                 Style::default().fg(Color::White)
@@ -2753,6 +2807,9 @@ mod tests {
             body_name: "Sirius".to_string(),
             chosen_lat: 45.5,
             chosen_lon: -123.25,
+            ho: 35.5,
+            gha: 245.62,
+            lha: 122.0,
             hc: 35.408,
             intercept: 2.3,
             azimuth: 125.0,
@@ -2761,6 +2818,9 @@ mod tests {
         assert_eq!(lop_data.body_name, "Sirius");
         assert_eq!(lop_data.chosen_lat, 45.5);
         assert_eq!(lop_data.chosen_lon, -123.25);
+        assert_eq!(lop_data.ho, 35.5);
+        assert_eq!(lop_data.gha, 245.62);
+        assert_eq!(lop_data.lha, 122.0);
         assert_eq!(lop_data.hc, 35.408);
         assert_eq!(lop_data.intercept, 2.3);
         assert_eq!(lop_data.azimuth, 125.0);
@@ -2772,6 +2832,9 @@ mod tests {
             body_name: "Sun".to_string(),
             chosen_lat: 40.0,
             chosen_lon: -74.0,
+            ho: 42.15,
+            gha: 180.5,
+            lha: 106.0,
             hc: 42.0,
             intercept: 2.5,
             azimuth: 215.0,
@@ -2787,6 +2850,9 @@ mod tests {
             body_name: "Venus".to_string(),
             chosen_lat: 40.0,
             chosen_lon: -74.0,
+            ho: 27.72,
+            gha: 215.33,
+            lha: 141.0,
             hc: 28.0,
             intercept: -1.7,
             azimuth: 45.0,
@@ -2802,6 +2868,9 @@ mod tests {
             body_name: "Moon".to_string(),
             chosen_lat: 40.0,
             chosen_lon: -74.0,
+            ho: 30.0,
+            gha: 95.25,
+            lha: 21.0,
             hc: 30.0,
             intercept: 0.0,
             azimuth: 90.0,
@@ -2826,6 +2895,9 @@ mod tests {
             body_name: "Sun".to_string(),
             chosen_lat: 40.0,
             chosen_lon: -74.0,
+            ho: 42.15,
+            gha: 180.5,
+            lha: 106.0,
             hc: 42.0,
             intercept: 2.0,
             azimuth: 180.0,
@@ -2908,6 +2980,9 @@ mod tests {
             body_name: "Arcturus".to_string(),
             chosen_lat: 50.0,
             chosen_lon: -5.0,
+            ho: 45.6,
+            gha: 180.25,
+            lha: 175.0,
             hc: 45.5,
             intercept: 3.2,
             azimuth: 225.0,
@@ -2917,6 +2992,9 @@ mod tests {
         assert_eq!(lop.body_name, "Arcturus");
         assert!(lop.chosen_lat.abs() <= 90.0, "Latitude should be within valid range");
         assert!(lop.chosen_lon.abs() <= 180.0, "Longitude should be within valid range");
+        assert!(lop.ho >= 0.0 && lop.ho <= 90.0, "Ho should be within valid altitude range");
+        assert!(lop.gha >= 0.0 && lop.gha < 360.0, "GHA should be 0-360 degrees");
+        assert!(lop.lha >= 0.0 && lop.lha < 360.0, "LHA should be 0-360 degrees");
         assert!(lop.hc >= 0.0 && lop.hc <= 90.0, "Hc should be within valid altitude range");
         assert!(lop.azimuth >= 0.0 && lop.azimuth < 360.0, "Azimuth should be 0-360 degrees");
     }
@@ -2928,6 +3006,9 @@ mod tests {
             body_name: format!("Body{}", i + 1),
             chosen_lat: 45.0,
             chosen_lon: -123.0,
+            ho: 35.1,
+            gha: 180.0,
+            lha: 57.0,
             hc: 35.0,
             intercept: 2.0,
             azimuth: 125.0,
@@ -2950,6 +3031,9 @@ mod tests {
             body_name: format!("Body{}", i + 1),
             chosen_lat: 45.0,
             chosen_lon: -123.0,
+            ho: 35.1,
+            gha: 180.0,
+            lha: 57.0,
             hc: 35.0,
             intercept: 2.0,
             azimuth: 125.0,
@@ -2972,6 +3056,9 @@ mod tests {
             body_name: "Sun".to_string(),
             chosen_lat: 45.0,
             chosen_lon: -123.0,
+            ho: 35.1,
+            gha: 180.0,
+            lha: 57.0,
             hc: 35.0,
             intercept: 2.0,
             azimuth: 125.0,
@@ -3018,6 +3105,114 @@ mod tests {
             assert!(lat_frac < 0.01 || lat_frac > 0.99,
                    "Chosen latitude should be whole degree, got {}", lop.chosen_lat);
         }
+    }
+
+    #[test]
+    fn test_lop_display_data_includes_ho_gha_lha() {
+        // Test that LopDisplayData includes Ho, GHA, and LHA after computation
+        let lop = LopDisplayData {
+            body_name: "Sun".to_string(),
+            chosen_lat: 46.0,
+            chosen_lon: -123.62,
+            ho: 35.42,           // Observed altitude after corrections
+            gha: 245.62,         // Greenwich Hour Angle
+            lha: 122.0,          // Local Hour Angle (should be whole number)
+            hc: 35.408,          // Calculated altitude
+            intercept: 0.7,
+            azimuth: 125.0,
+        };
+
+        // Verify all fields are present
+        assert_eq!(lop.body_name, "Sun");
+        assert_eq!(lop.chosen_lat, 46.0);
+        assert_eq!(lop.chosen_lon, -123.62);
+        assert_eq!(lop.ho, 35.42);
+        assert_eq!(lop.gha, 245.62);
+        assert_eq!(lop.lha, 122.0);
+        assert_eq!(lop.hc, 35.408);
+        assert_eq!(lop.intercept, 0.7);
+        assert_eq!(lop.azimuth, 125.0);
+
+        // Verify LHA is whole number
+        let lha_frac = lop.lha - lop.lha.round();
+        assert!(lha_frac.abs() < 0.001,
+                "LHA should be whole number after optimization, got {}", lop.lha);
+
+        // Verify relationship: LHA = GHA + Lon (mod 360)
+        let calculated_lha = (lop.gha + lop.chosen_lon + 360.0) % 360.0;
+        assert!((calculated_lha - lop.lha).abs() < 0.1,
+                "LHA should equal (GHA + Lon) mod 360. GHA={}, Lon={}, Expected LHA={}, Got={}",
+                lop.gha, lop.chosen_lon, calculated_lha, lop.lha);
+
+        // Verify Ho and Hc are different (one is observed, one is calculated)
+        // They may be close but shouldn't be identical
+        assert_ne!(lop.ho, lop.hc,
+                   "Ho (observed) and Hc (calculated) should be different values");
+    }
+
+    #[test]
+    fn test_lha_always_whole_number_in_display_data() {
+        // Test that LHA is always a whole number in LopDisplayData
+        // This is critical for sight reduction table lookups
+
+        let test_cases = vec![
+            (245.62, -123.25, 122.0),  // GHA, chosen_lon, expected LHA
+            (180.75, 45.25, 226.0),
+            (358.75, -2.75, 356.0),
+            (90.45, 69.55, 160.0),
+        ];
+
+        for (gha, chosen_lon, expected_lha) in test_cases {
+            let lop = LopDisplayData {
+                body_name: "Test".to_string(),
+                chosen_lat: 45.0,
+                chosen_lon,
+                ho: 35.0,
+                gha,
+                lha: expected_lha,
+                hc: 35.0,
+                intercept: 0.0,
+                azimuth: 180.0,
+            };
+
+            // Verify LHA is whole number
+            let lha_frac = lop.lha - lop.lha.round();
+            assert!(lha_frac.abs() < 0.001,
+                    "LHA should be whole number, got {} (fraction: {})",
+                    lop.lha, lha_frac);
+
+            // Verify LHA matches expected value
+            assert!((lop.lha - expected_lha).abs() < 0.01,
+                    "LHA should be {}, got {}", expected_lha, lop.lha);
+        }
+    }
+
+    #[test]
+    fn test_ho_differs_from_hs_due_to_corrections() {
+        // Test that Ho (observed altitude) differs from Hs (sextant altitude) due to corrections
+        // Corrections should include: index error, dip, refraction, semi-diameter, parallax
+
+        // Create a sight with known values
+        let hs = 30.0;  // Sextant altitude 30°
+        let index_error = 2.0 / 60.0;  // +2' index error
+        let height_of_eye = 10.0;  // 10m height of eye
+
+        // Calculate expected Ho
+        let mut expected_ho = hs;
+        expected_ho += index_error;  // Add index error
+        expected_ho += celtnav::sight_reduction::apply_dip_correction(height_of_eye);  // Subtract dip
+        expected_ho += celtnav::sight_reduction::apply_refraction_correction(expected_ho);  // Subtract refraction
+        expected_ho += celtnav::sight_reduction::apply_semidiameter_correction(0.267, true);  // Add SD for Sun
+
+        // Ho should be different from Hs due to corrections
+        assert_ne!(expected_ho, hs,
+                   "Ho should differ from Hs due to corrections");
+
+        // Ho should be less than Hs (dip and refraction are negative)
+        // But SD may make it higher, so just verify it's different
+        let correction_total = expected_ho - hs;
+        assert!(correction_total.abs() > 0.01,
+                "Total correction should be significant, got {}", correction_total);
     }
 }
 

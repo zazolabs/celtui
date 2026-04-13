@@ -526,4 +526,92 @@ mod tests {
         assert!((chosen_lon - dr_lon).abs() < 0.1,
                 "Chosen longitude should be close to DR={}, got {}", dr_lon, chosen_lon);
     }
+
+    #[test]
+    fn test_ho_calculation_correction_order() {
+        // Test that Ho corrections are applied in correct order
+        // Order should be: Hs + IE + dip + refraction + SD + parallax
+
+        let hs = 30.0;  // Sextant altitude: 30°
+        let index_error = 2.0 / 60.0;  // 2 arcminutes on scale
+        let height_of_eye = 10.0;  // 10 meters
+
+        // Apply corrections in correct order
+        let mut ho = hs;
+        ho += index_error;  // Add index error (can be positive or negative)
+
+        // Store altitude before dip for later comparison
+        let after_ie = ho;
+
+        ho += apply_dip_correction(height_of_eye);  // Subtract dip (always negative)
+        let dip = apply_dip_correction(height_of_eye);
+        assert!(dip < 0.0, "Dip should be negative");
+        assert!(ho < after_ie, "Altitude after dip should be less than before");
+
+        // Store altitude after dip for refraction calculation
+        let after_dip = ho;
+
+        ho += apply_refraction_correction(after_dip);  // Subtract refraction (always negative)
+        let refraction = apply_refraction_correction(after_dip);
+        assert!(refraction < 0.0, "Refraction should be negative");
+        assert!(ho < after_dip, "Altitude after refraction should be less than before");
+
+        // For Sun: add semi-diameter (lower limb)
+        let sd_sun = 0.267;  // Sun's semi-diameter in degrees (~16')
+        ho += apply_semidiameter_correction(sd_sun, true);  // Lower limb: add SD
+        let sd = apply_semidiameter_correction(sd_sun, true);
+        assert!(sd > 0.0, "SD correction for lower limb should be positive");
+
+        // Verify Ho is reasonable
+        assert!(ho > 0.0 && ho < 90.0, "Ho should be between 0° and 90°");
+
+        // Verify correction magnitudes are reasonable
+        assert!(dip.abs() < 0.1, "Dip should be less than 0.1° (6') for height of 10m");
+        assert!(refraction.abs() < 0.1, "Refraction should be less than 0.1° (6') at 30° altitude");
+    }
+
+    #[test]
+    fn test_lha_is_whole_number_after_optimization() {
+        // After optimizing chosen position, LHA must be exactly a whole number
+        // This is critical for sight reduction table lookups
+
+        let test_cases = vec![
+            (45.542, -123.25, 245.62),  // 45°32.5'N, 123°15.0'W, GHA 245°37.2'
+            (35.25, 45.5, 180.75),      // 35°15.0'N, 45°30.0'E, GHA 180°45.0'
+            (50.0, -2.5, 358.75),       // 50°00.0'N, 2°30.0'W, GHA 358°45.0'
+            (-20.33, 150.67, 90.45),    // 20°20'S, 150°40'E, GHA 90°27'
+        ];
+
+        for (dr_lat, dr_lon, gha) in test_cases {
+            let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_lat, dr_lon, gha);
+
+            // Calculate LHA
+            let lha = (gha + chosen_lon + 360.0) % 360.0;
+
+            // LHA must be whole number (within floating point precision)
+            let lha_frac = lha - lha.round();
+            assert!(lha_frac.abs() < 0.001,
+                    "LHA must be whole number. DR: ({}, {}), GHA: {}, LHA: {}, fraction: {}",
+                    dr_lat, dr_lon, gha, lha, lha_frac);
+
+            // Chosen position should be within 1° of DR
+            assert!((chosen_lat - dr_lat).abs() <= 1.0,
+                    "Chosen lat should be within 1° of DR");
+            assert!((chosen_lon - dr_lon).abs() <= 1.0,
+                    "Chosen lon should be within 1° of DR");
+        }
+    }
+
+    #[test]
+    fn test_semidiameter_sign_for_limbs() {
+        let sd = 0.267;  // Sun's semi-diameter
+
+        let sd_lower = apply_semidiameter_correction(sd, true);
+        assert!(sd_lower > 0.0, "Lower limb: SD correction should be positive (add SD)");
+        assert!((sd_lower - sd).abs() < 0.001, "Lower limb: SD correction should equal SD");
+
+        let sd_upper = apply_semidiameter_correction(sd, false);
+        assert!(sd_upper < 0.0, "Upper limb: SD correction should be negative (subtract SD)");
+        assert!((sd_upper + sd).abs() < 0.001, "Upper limb: SD correction should equal -SD");
+    }
 }
