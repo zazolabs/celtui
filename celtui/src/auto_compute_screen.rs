@@ -342,6 +342,24 @@ impl AutoComputeForm {
         self.current_sight.body = bodies[prev_idx].clone();
     }
 
+    /// Toggle latitude direction between N and S
+    pub fn toggle_lat_direction(&mut self) {
+        self.current_sight.lat_direction = if self.current_sight.lat_direction == 'N' {
+            'S'
+        } else {
+            'N'
+        };
+    }
+
+    /// Toggle longitude direction between E and W
+    pub fn toggle_lon_direction(&mut self) {
+        self.current_sight.lon_direction = if self.current_sight.lon_direction == 'E' {
+            'W'
+        } else {
+            'E'
+        };
+    }
+
     /// Filter star catalog based on current star name input
     pub fn filter_stars(&self) -> Vec<String> {
         use celtnav::almanac::get_star_catalog;
@@ -922,6 +940,48 @@ impl AutoComputeForm {
                     _ => {}
                 }
             }
+            KeyCode::Left => {
+                match self.mode {
+                    AutoComputeMode::EnteringSight => {
+                        // Left arrow cycles selection fields backward (same as '-')
+                        match self.current_field {
+                            SightInputField::Body => {
+                                self.previous_body();
+                            }
+                            SightInputField::LatDirection => {
+                                self.toggle_lat_direction();
+                            }
+                            SightInputField::LonDirection => {
+                                self.toggle_lon_direction();
+                            }
+                            // For text input fields, do nothing (don't interfere with typing)
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Right => {
+                match self.mode {
+                    AutoComputeMode::EnteringSight => {
+                        // Right arrow cycles selection fields forward (same as '+')
+                        match self.current_field {
+                            SightInputField::Body => {
+                                self.next_body();
+                            }
+                            SightInputField::LatDirection => {
+                                self.toggle_lat_direction();
+                            }
+                            SightInputField::LonDirection => {
+                                self.toggle_lon_direction();
+                            }
+                            // For text input fields, do nothing (don't interfere with typing)
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
             KeyCode::Char(c) => {
                 match self.mode {
                     AutoComputeMode::EnteringSight => {
@@ -1121,7 +1181,7 @@ fn render_input_form(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
     frame.render_widget(paragraph, chunks[0]);
 
     let help_lines = vec![
-        Line::from("Enter: Add Sight | C: Compute Fix | V: View Sights | R: Running Fix | +/-: Change Body"),
+        Line::from("Enter: Add Sight | C: Compute Fix | V: View Sights | R: Running Fix | +/- or ←→: Cycle Options"),
         Line::from("Star field: Up/Down: Navigate | Enter: Select | Type to filter stars"),
         Line::from("F2: Save | F3: Load | F5: Export Log | F6: Export CSV"),
     ];
@@ -1825,6 +1885,151 @@ mod tests {
             // Message should mention running fix or advancement
             assert!(msg.contains("advanced") || msg.contains("Running fix") || msg.contains("Fix computed"));
         }
+    }
+
+    // Tests for Issue 2: Left/Right arrow key support for cycling
+
+    #[test]
+    fn test_right_arrow_cycles_body_forward() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::Body;
+        form.current_sight.body = SightCelestialBody::Sun;
+
+        // Simulate Right arrow key press
+        let key_event = KeyEvent::from(KeyCode::Right);
+        form.handle_key_event(key_event);
+
+        // Should cycle to next body (Moon)
+        assert_eq!(form.current_sight.body, SightCelestialBody::Moon);
+    }
+
+    #[test]
+    fn test_left_arrow_cycles_body_backward() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::Body;
+        form.current_sight.body = SightCelestialBody::Moon;
+
+        // Simulate Left arrow key press
+        let key_event = KeyEvent::from(KeyCode::Left);
+        form.handle_key_event(key_event);
+
+        // Should cycle to previous body (Sun)
+        assert_eq!(form.current_sight.body, SightCelestialBody::Sun);
+    }
+
+    #[test]
+    fn test_left_arrow_wraps_around_at_start() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::Body;
+        form.current_sight.body = SightCelestialBody::Sun; // First in list
+
+        // Simulate Left arrow key press
+        let key_event = KeyEvent::from(KeyCode::Left);
+        form.handle_key_event(key_event);
+
+        // Should wrap to last body (Star with empty name)
+        match form.current_sight.body {
+            SightCelestialBody::Star(_) => {}, // Expected
+            _ => panic!("Expected to wrap to Star variant"),
+        }
+    }
+
+    #[test]
+    fn test_right_arrow_wraps_around_at_end() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::Body;
+        form.current_sight.body = SightCelestialBody::Star(String::new()); // Last in list
+
+        // Simulate Right arrow key press
+        let key_event = KeyEvent::from(KeyCode::Right);
+        form.handle_key_event(key_event);
+
+        // Should wrap to first body (Sun)
+        assert_eq!(form.current_sight.body, SightCelestialBody::Sun);
+    }
+
+    #[test]
+    fn test_left_right_arrows_do_not_interfere_with_text_input() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::Date;
+        form.current_sight.date = "2024".to_string();
+
+        // Simulate Left arrow key press (should not change the date value)
+        let key_event = KeyEvent::from(KeyCode::Left);
+        form.handle_key_event(key_event);
+
+        // Date should remain unchanged (arrows don't affect text fields)
+        assert_eq!(form.current_sight.date, "2024");
+
+        // Simulate Right arrow key press
+        let key_event = KeyEvent::from(KeyCode::Right);
+        form.handle_key_event(key_event);
+
+        // Date should still be unchanged
+        assert_eq!(form.current_sight.date, "2024");
+    }
+
+    #[test]
+    fn test_left_right_arrows_cycle_lat_direction() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::LatDirection;
+        form.current_sight.lat_direction = 'N';
+
+        // Simulate Right arrow key press
+        let key_event = KeyEvent::from(KeyCode::Right);
+        form.handle_key_event(key_event);
+
+        // Should cycle to S
+        assert_eq!(form.current_sight.lat_direction, 'S');
+
+        // Simulate Right arrow again
+        let key_event = KeyEvent::from(KeyCode::Right);
+        form.handle_key_event(key_event);
+
+        // Should wrap back to N
+        assert_eq!(form.current_sight.lat_direction, 'N');
+
+        // Simulate Left arrow
+        let key_event = KeyEvent::from(KeyCode::Left);
+        form.handle_key_event(key_event);
+
+        // Should cycle back to S
+        assert_eq!(form.current_sight.lat_direction, 'S');
+    }
+
+    #[test]
+    fn test_left_right_arrows_cycle_lon_direction() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::LonDirection;
+        form.current_sight.lon_direction = 'E';
+
+        // Simulate Right arrow key press
+        let key_event = KeyEvent::from(KeyCode::Right);
+        form.handle_key_event(key_event);
+
+        // Should cycle to W
+        assert_eq!(form.current_sight.lon_direction, 'W');
+
+        // Simulate Right arrow again
+        let key_event = KeyEvent::from(KeyCode::Right);
+        form.handle_key_event(key_event);
+
+        // Should wrap back to E
+        assert_eq!(form.current_sight.lon_direction, 'E');
+
+        // Simulate Left arrow
+        let key_event = KeyEvent::from(KeyCode::Left);
+        form.handle_key_event(key_event);
+
+        // Should cycle back to W
+        assert_eq!(form.current_sight.lon_direction, 'W');
     }
 }
 

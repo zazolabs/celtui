@@ -463,6 +463,36 @@ impl AlmanacForm {
                     self.next_star_match();
                 }
             }
+            KeyCode::Left => {
+                // Left arrow cycles selection fields backward (same as '-')
+                match self.current_field {
+                    AlmanacInputField::CelestialBody => {
+                        self.previous_celestial_body();
+                        self.lookup(); // Auto-lookup on body change
+                    }
+                    AlmanacInputField::StarName => {
+                        self.previous_star();
+                        self.lookup(); // Auto-lookup on star change
+                    }
+                    // For text input fields, do nothing
+                    _ => {}
+                }
+            }
+            KeyCode::Right => {
+                // Right arrow cycles selection fields forward (same as '+')
+                match self.current_field {
+                    AlmanacInputField::CelestialBody => {
+                        self.next_celestial_body();
+                        self.lookup(); // Auto-lookup on body change
+                    }
+                    AlmanacInputField::StarName => {
+                        self.next_star();
+                        self.lookup(); // Auto-lookup on star change
+                    }
+                    // For text input fields, do nothing
+                    _ => {}
+                }
+            }
             KeyCode::Char(c) => {
                 match self.current_field {
                     AlmanacInputField::CelestialBody => {
@@ -542,7 +572,7 @@ fn render_form(frame: &mut Frame, area: Rect, form: &AlmanacForm) {
     render_form_fields(frame, chunks[0], form);
 
     // Render help text
-    let help_text = "Tab: Next | Up/Down: Browse Time | +/-: Change Body | Enter: Lookup";
+    let help_text = "Tab: Next | Up/Down: Browse Time | +/- or ←→: Cycle Options | Enter: Lookup";
     let help_widget = Paragraph::new(help_text)
         .style(Style::default().fg(Color::DarkGray))
         .alignment(Alignment::Center);

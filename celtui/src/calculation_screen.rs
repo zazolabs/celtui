@@ -429,6 +429,33 @@ impl CalculationForm {
         self.celestial_body = bodies[prev_idx];
     }
 
+    /// Toggle latitude direction between N and S
+    pub fn toggle_latitude_direction(&mut self) {
+        self.latitude_direction = if self.latitude_direction == 'N' {
+            'S'
+        } else {
+            'N'
+        };
+    }
+
+    /// Toggle longitude direction between E and W
+    pub fn toggle_longitude_direction(&mut self) {
+        self.longitude_direction = if self.longitude_direction == 'E' {
+            'W'
+        } else {
+            'E'
+        };
+    }
+
+    /// Toggle declination direction between N and S
+    pub fn toggle_declination_direction(&mut self) {
+        self.declination_direction = if self.declination_direction == 'N' {
+            'S'
+        } else {
+            'N'
+        };
+    }
+
     /// Check if the current field is a text input field (for disabling screen shortcuts)
     /// Returns true when user is typing in free-form text fields
     pub fn is_text_input_active(&self) -> bool {
@@ -477,6 +504,44 @@ impl CalculationForm {
                 // In StarName field, navigate filtered star list down
                 if self.current_field == InputField::StarName {
                     self.next_star_match();
+                }
+            }
+            KeyCode::Left => {
+                // Left arrow cycles selection fields backward (same as '-')
+                match self.current_field {
+                    InputField::CelestialBody => {
+                        self.previous_celestial_body();
+                    }
+                    InputField::LatitudeDirection => {
+                        self.toggle_latitude_direction();
+                    }
+                    InputField::LongitudeDirection => {
+                        self.toggle_longitude_direction();
+                    }
+                    InputField::DeclinationDirection => {
+                        self.toggle_declination_direction();
+                    }
+                    // For text input fields, do nothing
+                    _ => {}
+                }
+            }
+            KeyCode::Right => {
+                // Right arrow cycles selection fields forward (same as '+')
+                match self.current_field {
+                    InputField::CelestialBody => {
+                        self.next_celestial_body();
+                    }
+                    InputField::LatitudeDirection => {
+                        self.toggle_latitude_direction();
+                    }
+                    InputField::LongitudeDirection => {
+                        self.toggle_longitude_direction();
+                    }
+                    InputField::DeclinationDirection => {
+                        self.toggle_declination_direction();
+                    }
+                    // For text input fields, do nothing
+                    _ => {}
                 }
             }
             KeyCode::Char(c) => {
@@ -562,7 +627,7 @@ fn render_form(frame: &mut Frame, area: Rect, form: &CalculationForm) {
     render_form_fields(frame, chunks[1], form);
 
     // Render help text
-    let help_text = "Tab/Shift+Tab: Navigate | Enter: Calculate | +/-: Change Body";
+    let help_text = "Tab/Shift+Tab: Navigate | Enter: Calculate | +/- or ←→: Cycle Options";
     let help_widget = Paragraph::new(help_text)
         .style(Style::default().fg(Color::DarkGray))
         .alignment(Alignment::Center);
