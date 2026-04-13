@@ -34,6 +34,8 @@ pub struct Position {
 pub struct Fix {
     /// Calculated position
     pub position: Position,
+    /// Dead Reckoning (DR) position - average of DR positions from all LOPs
+    pub dr_position: Position,
     /// Number of LOPs used in the fix
     pub num_lops: usize,
     /// Estimated accuracy in nautical miles (standard deviation for least squares)
@@ -116,6 +118,10 @@ pub fn fix_from_two_lops(lop1: &LineOfPosition, lop2: &LineOfPosition) -> Option
         position: Position {
             latitude: fix_lat,
             longitude: fix_lon,
+        },
+        dr_position: Position {
+            latitude: dr_lat,
+            longitude: dr_lon,
         },
         num_lops: 2,
         accuracy_estimate: None,
@@ -222,6 +228,10 @@ pub fn fix_from_multiple_lops(lops: &[LineOfPosition]) -> Option<Fix> {
         position: Position {
             latitude: current_lat,
             longitude: current_lon,
+        },
+        dr_position: Position {
+            latitude: dr_lat,
+            longitude: dr_lon,
         },
         num_lops: lops.len(),
         accuracy_estimate: Some(rms_error),

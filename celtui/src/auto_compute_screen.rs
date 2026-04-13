@@ -957,7 +957,7 @@ impl AutoComputeForm {
             return Err("No sights to export".to_string());
         }
 
-        let log = format_sight_log(&self.sights, self.fix_result.as_ref());
+        let log = format_sight_log(&self.sights, &self.lop_data, self.fix_result.as_ref());
         save_export(&log, "sight_log")
     }
 
@@ -1449,34 +1449,41 @@ fn render_sights_list(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
 }
 
 fn render_fix_results(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
-    if let Some(error) = &form.error_message {
-        // Show status message at the top if present
-        if let Some(fix) = &form.fix_result {
-            // Split area: status message at top, then two-pane layout below
-            let vertical_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(4),  // Status message
-                    Constraint::Min(0),     // Two-pane layout
-                ])
-                .split(area);
+    if let Some(fix) = &form.fix_result {
+        // Split area: two-pane layout on top, status at bottom (1 line)
+        let vertical_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),      // Two-pane layout (LOPs and Fix)
+                Constraint::Length(1),   // Status message (1 line, no borders)
+            ])
+            .split(area);
 
-            let paragraph = Paragraph::new(error.clone())
-                .style(Style::default().fg(Color::Yellow))
-                .block(
-                    Block::default()
-                        .title(" Status ")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Blue)),
-                )
-                .wrap(Wrap { trim: true });
+        // Render two-pane layout in top section
+        render_two_pane_layout(frame, vertical_chunks[0], form, fix);
 
-            frame.render_widget(paragraph, vertical_chunks[0]);
-
-            // Render two-pane layout in remaining space
-            render_two_pane_layout(frame, vertical_chunks[1], form, fix);
+        // Render status message at bottom (1 line, no borders)
+        let status_text = if let Some(error) = &form.error_message {
+            error.clone()
         } else {
-            // No fix, just show error
+            "Fix computed successfully".to_string()
+        };
+
+        let status_color = if form.error_message.is_some() {
+            Color::Yellow
+        } else {
+            Color::Green
+        };
+
+        let status_paragraph = Paragraph::new(status_text)
+            .style(Style::default().fg(status_color))
+            .alignment(Alignment::Left);
+
+        frame.render_widget(status_paragraph, vertical_chunks[1]);
+    } else {
+        // No fix yet
+        if let Some(error) = &form.error_message {
+            // Show error message
             let paragraph = Paragraph::new(error.clone())
                 .style(Style::default().fg(Color::Yellow))
                 .block(
@@ -1488,24 +1495,21 @@ fn render_fix_results(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
                 .wrap(Wrap { trim: true });
 
             frame.render_widget(paragraph, area);
-        }
-    } else if let Some(fix) = &form.fix_result {
-        // No error message, just render the two-pane layout
-        render_two_pane_layout(frame, area, form, fix);
-    } else {
-        // No fix and no message - show instructions
-        let text = "Enter 2 or more sights, then press 'C' to compute fix";
-        let paragraph = Paragraph::new(text)
-            .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC))
-            .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .title(" Fix Results ")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Blue)),
-            );
+        } else {
+            // Show instructions
+            let text = "Enter 2 or more sights, then press 'C' to compute fix";
+            let paragraph = Paragraph::new(text)
+                .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC))
+                .alignment(Alignment::Center)
+                .block(
+                    Block::default()
+                        .title(" Fix Results ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Blue)),
+                );
 
-        frame.render_widget(paragraph, area);
+            frame.render_widget(paragraph, area);
+        }
     }
 }
 
@@ -1663,6 +1667,14 @@ fn render_lop_column(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData],
 
 /// Renders the fix data in the right pane using a simple table format
 fn render_fix_pane(frame: &mut Frame, area: Rect, fix: &Fix) {
+    // DR Position
+    let dr_lat_sign = if fix.dr_position.latitude >= 0.0 { "N" } else { "S" };
+    let dr_lat_dms = celtnav::decimal_to_dms(fix.dr_position.latitude.abs());
+
+    let dr_lon_sign = if fix.dr_position.longitude >= 0.0 { "E" } else { "W" };
+    let dr_lon_dms = celtnav::decimal_to_dms(fix.dr_position.longitude.abs());
+
+    // Fix Position
     let lat_sign = if fix.position.latitude >= 0.0 { "N" } else { "S" };
     let lat_dms = celtnav::decimal_to_dms(fix.position.latitude.abs());
 
@@ -1670,15 +1682,28 @@ fn render_fix_pane(frame: &mut Frame, area: Rect, fix: &Fix) {
     let lon_dms = celtnav::decimal_to_dms(fix.position.longitude.abs());
 
     let mut rows = vec![
-        Row::new(vec!["Fix Position".to_string(), "".to_string()]),
+        Row::new(vec!["DR Position".to_string(), "".to_string()])
+            .style(Style::default().fg(Color::Cyan)),
         Row::new(vec![
-            "Latitude".to_string(),
+            "  Latitude".to_string(),
+            format!("{} {:02}° {:05.2}'", dr_lat_sign, dr_lat_dms.degrees, dr_lat_dms.minutes),
+        ]),
+        Row::new(vec![
+            "  Longitude".to_string(),
+            format!("{} {:03}° {:05.2}'", dr_lon_sign, dr_lon_dms.degrees, dr_lon_dms.minutes),
+        ]),
+        Row::new(vec!["".to_string(), "".to_string()]), // Empty row for spacing
+        Row::new(vec!["Fix Position".to_string(), "".to_string()])
+            .style(Style::default().fg(Color::Green)),
+        Row::new(vec![
+            "  Latitude".to_string(),
             format!("{} {:02}° {:05.2}'", lat_sign, lat_dms.degrees, lat_dms.minutes),
         ]),
         Row::new(vec![
-            "Longitude".to_string(),
+            "  Longitude".to_string(),
             format!("{} {:03}° {:05.2}'", lon_sign, lon_dms.degrees, lon_dms.minutes),
         ]),
+        Row::new(vec!["".to_string(), "".to_string()]), // Empty row for spacing
         Row::new(vec!["Number of LOPs".to_string(), fix.num_lops.to_string()]),
     ];
 
@@ -2705,6 +2730,10 @@ mod tests {
             position: Position {
                 latitude: 40.5,
                 longitude: -74.2,
+            },
+            dr_position: Position {
+                latitude: 40.48,
+                longitude: -74.18,
             },
             num_lops: 3,
             accuracy_estimate: Some(1.5),

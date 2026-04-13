@@ -411,4 +411,119 @@ mod tests {
                     correction, alt);
         }
     }
+
+    #[test]
+    fn test_optimize_chosen_position_west_longitude() {
+        // Test case from user: DR W 123° 15.0', GHA 245° 37.2'
+        let dr_lat = 45.542; // 45° 32.5' N
+        let dr_lon = -123.25; // 123° 15.0' W (negative for West)
+        let gha = 245.62; // 245° 37.2'
+
+        let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_lat, dr_lon, gha);
+
+        // Latitude should be rounded to 46° N
+        assert!((chosen_lat - 46.0).abs() < 0.01, "Chosen latitude should be 46°, got {}", chosen_lat);
+
+        // Calculate resulting LHA
+        let lha = (gha + chosen_lon + 360.0) % 360.0;
+
+        // LHA should be a whole number (within 0.01°)
+        let lha_frac = lha - lha.round();
+        assert!(lha_frac.abs() < 0.01,
+                "LHA should be whole number, got LHA={}, fraction={}", lha, lha_frac);
+
+        // Chosen longitude should be closest to DR that makes LHA whole
+        // Expected: LHA = GHA + Lon = 245.62 + (-123.25) = 122.37
+        // Want LHA = 122°, so adjust lon by -0.37°
+        // Chosen lon = -123.25 - 0.37 = -123.62 = W 123° 37.2'
+        let expected_lon = -123.62;
+        assert!((chosen_lon - expected_lon).abs() < 0.05,
+                "Chosen longitude should be near {}, got {}", expected_lon, chosen_lon);
+    }
+
+    #[test]
+    fn test_optimize_chosen_position_east_longitude() {
+        // Test with East longitude: DR E 45° 30.0', GHA 180° 45.0'
+        let dr_lat = 35.25; // 35° 15.0' N
+        let dr_lon = 45.5; // 45° 30.0' E (positive for East)
+        let gha = 180.75; // 180° 45.0'
+
+        let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_lat, dr_lon, gha);
+
+        // Latitude should be rounded to 35° N
+        assert!((chosen_lat - 35.0).abs() < 0.01, "Chosen latitude should be 35°, got {}", chosen_lat);
+
+        // Calculate resulting LHA
+        let lha = (gha + chosen_lon + 360.0) % 360.0;
+
+        // LHA should be a whole number
+        let lha_frac = lha - lha.round();
+        assert!(lha_frac.abs() < 0.01,
+                "LHA should be whole number, got LHA={}, fraction={}", lha, lha_frac);
+
+        // Verify chosen longitude is nearest to DR
+        // LHA = 180.75 + 45.5 = 226.25
+        // Want LHA = 226° or 227°
+        // For LHA = 226°: need Lon = 226 - 180.75 = 45.25° E
+        // For LHA = 227°: need Lon = 227 - 180.75 = 46.25° E
+        // DR is 45.5°, so 45.25° is closest (0.25° away vs 0.75° away)
+        let expected_lon = 45.25;
+        assert!((chosen_lon - expected_lon).abs() < 0.05,
+                "Chosen longitude should be near {}, got {}", expected_lon, chosen_lon);
+    }
+
+    #[test]
+    fn test_optimize_chosen_position_crossing_zero_meridian() {
+        // Test crossing 0° meridian: DR W 2° 30.0', GHA 358° 45.0'
+        let dr_lat = 50.0; // 50° 0.0' N
+        let dr_lon = -2.5; // 2° 30.0' W (negative for West)
+        let gha = 358.75; // 358° 45.0'
+
+        let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_lat, dr_lon, gha);
+
+        // Latitude should be 50° N
+        assert!((chosen_lat - 50.0).abs() < 0.01, "Chosen latitude should be 50°, got {}", chosen_lat);
+
+        // Calculate resulting LHA
+        let lha = (gha + chosen_lon + 360.0) % 360.0;
+
+        // LHA should be a whole number
+        let lha_frac = lha - lha.round();
+        assert!(lha_frac.abs() < 0.01,
+                "LHA should be whole number, got LHA={}, fraction={}", lha, lha_frac);
+
+        // LHA = 358.75 + (-2.5) = 356.25
+        // Want LHA = 356° or 357°
+        // For LHA = 356°: need Lon = 356 - 358.75 = -2.75° W
+        // For LHA = 357°: need Lon = 357 - 358.75 = -1.75° W
+        // DR is -2.5°, so -2.75° is closest (0.25° away vs 0.75° away)
+        let expected_lon = -2.75;
+        assert!((chosen_lon - expected_lon).abs() < 0.05,
+                "Chosen longitude should be near {}, got {}", expected_lon, chosen_lon);
+    }
+
+    #[test]
+    fn test_optimize_chosen_position_lha_near_round() {
+        // Test when LHA is already nearly a whole number
+        let dr_lat = 40.0;
+        let dr_lon = -70.0; // 70° W
+        let gha = 290.05; // 290° 03.0' - results in LHA very close to 220°
+
+        let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_lat, dr_lon, gha);
+
+        // Latitude should be 40° N
+        assert!((chosen_lat - 40.0).abs() < 0.01);
+
+        // Calculate resulting LHA
+        let lha = (gha + chosen_lon + 360.0) % 360.0;
+
+        // LHA should be a whole number
+        let lha_frac = lha - lha.round();
+        assert!(lha_frac.abs() < 0.01,
+                "LHA should be whole number, got LHA={}, fraction={}", lha, lha_frac);
+
+        // Chosen longitude should be very close to DR since only small adjustment needed
+        assert!((chosen_lon - dr_lon).abs() < 0.1,
+                "Chosen longitude should be close to DR={}, got {}", dr_lon, chosen_lon);
+    }
 }
