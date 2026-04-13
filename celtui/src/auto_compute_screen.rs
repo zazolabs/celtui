@@ -91,6 +91,8 @@ impl SightCelestialBody {
 /// - The intercept distance (toward/away from the body)
 /// - The true azimuth bearing to the body
 ///
+/// For stars, also includes GHA Aries and LHA Aries for Pub 249 Vol 1 table lookup comparison.
+///
 /// To plot the LOP on a chart:
 /// 1. Mark the chosen position (AP)
 /// 2. Draw a line from AP along the azimuth bearing
@@ -110,7 +112,14 @@ pub struct LopDisplayData {
     /// For stars, this is GHA of the star (GHA Aries + SHA combined)
     pub gha: f64,
     /// Local Hour Angle (LHA) in degrees (should be whole number after optimization)
+    /// For stars, this is LHA of the star used in spherical trig calculations
     pub lha: f64,
+    /// GHA Aries in degrees (only for stars, None for other bodies)
+    /// For Pub 249 Vol 1 table lookup comparison
+    pub gha_aries: Option<f64>,
+    /// LHA Aries in degrees (only for stars, None for other bodies)
+    /// For Pub 249 Vol 1 table lookup: enter tables with LHA Aries and star name
+    pub lha_aries: Option<f64>,
     /// Calculated altitude (Hc) in degrees at the chosen position
     pub hc: f64,
     /// Intercept in nautical miles (positive = toward body, negative = away from body)
@@ -840,6 +849,18 @@ impl AutoComputeForm {
             dr_longitude,
         };
 
+        // For stars, also calculate GHA Aries and LHA Aries for table lookup comparison
+        let (gha_aries, lha_aries) = if let SightCelestialBody::Star(star_name) = &sight.body {
+            use celtnav::almanac::{gha_aries as calc_gha_aries, find_star};
+
+            let gha_aries_val = calc_gha_aries(datetime);
+            let lha_aries_val = (gha_aries_val + chosen_lon + 360.0) % 360.0;
+
+            (Some(gha_aries_val), Some(lha_aries_val))
+        } else {
+            (None, None)
+        };
+
         // Display data shows the chosen (optimized) position and all key values
         let display_data = LopDisplayData {
             body_name: sight.body.name(),
@@ -848,6 +869,8 @@ impl AutoComputeForm {
             ho,
             gha: position.gha,
             lha,
+            gha_aries,
+            lha_aries,
             hc,
             intercept,
             azimuth: zn,
@@ -1653,6 +1676,26 @@ fn render_lop_column(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData],
                 Style::default().fg(Color::White)
             ),
         ]));
+
+        // For stars, show GHA Aries and LHA Aries for Pub 249 Vol 1 comparison
+        if let (Some(gha_aries), Some(lha_aries)) = (lop.gha_aries, lop.lha_aries) {
+            let gha_aries_dms = celtnav::decimal_to_dms(gha_aries.abs());
+            let lha_aries_dms = celtnav::decimal_to_dms(lha_aries.abs());
+
+            lop_lines.push(Line::from(vec![
+                Span::styled("  GHA♈: ", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{:03}° {:04.1}'", gha_aries_dms.degrees, gha_aries_dms.minutes),
+                    Style::default().fg(Color::White)
+                ),
+                Span::styled("  LHA♈: ", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{:03}° {:04.1}'", lha_aries_dms.degrees, lha_aries_dms.minutes),
+                    Style::default().fg(Color::White)
+                ),
+                Span::styled(" (Pub 249)", Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+            ]));
+        }
 
         // Hc, Intercept, and Azimuth on one line
         let intercept_color = if lop.intercept >= 0.0 {
@@ -2792,6 +2835,8 @@ mod tests {
             ho: 35.5,
             gha: 245.62,
             lha: 122.0,
+            gha_aries: Some(10.0),
+            lha_aries: Some(246.75),
             hc: 35.408,
             intercept: 2.3,
             azimuth: 125.0,
@@ -2817,6 +2862,8 @@ mod tests {
             ho: 42.15,
             gha: 180.5,
             lha: 106.0,
+            gha_aries: None,
+            lha_aries: None,
             hc: 42.0,
             intercept: 2.5,
             azimuth: 215.0,
@@ -2835,6 +2882,8 @@ mod tests {
             ho: 27.72,
             gha: 215.33,
             lha: 141.0,
+            gha_aries: None,
+            lha_aries: None,
             hc: 28.0,
             intercept: -1.7,
             azimuth: 45.0,
@@ -2853,6 +2902,8 @@ mod tests {
             ho: 30.0,
             gha: 95.25,
             lha: 21.0,
+            gha_aries: None,
+            lha_aries: None,
             hc: 30.0,
             intercept: 0.0,
             azimuth: 90.0,
@@ -2880,6 +2931,8 @@ mod tests {
             ho: 42.15,
             gha: 180.5,
             lha: 106.0,
+            gha_aries: None,
+            lha_aries: None,
             hc: 42.0,
             intercept: 2.0,
             azimuth: 180.0,
@@ -2965,6 +3018,8 @@ mod tests {
             ho: 45.6,
             gha: 180.25,
             lha: 175.0,
+            gha_aries: None,
+            lha_aries: None,
             hc: 45.5,
             intercept: 3.2,
             azimuth: 225.0,
@@ -2991,6 +3046,8 @@ mod tests {
             ho: 35.1,
             gha: 180.0,
             lha: 57.0,
+            gha_aries: None,
+            lha_aries: None,
             hc: 35.0,
             intercept: 2.0,
             azimuth: 125.0,
@@ -3016,6 +3073,8 @@ mod tests {
             ho: 35.1,
             gha: 180.0,
             lha: 57.0,
+            gha_aries: None,
+            lha_aries: None,
             hc: 35.0,
             intercept: 2.0,
             azimuth: 125.0,
@@ -3041,6 +3100,8 @@ mod tests {
             ho: 35.1,
             gha: 180.0,
             lha: 57.0,
+            gha_aries: None,
+            lha_aries: None,
             hc: 35.0,
             intercept: 2.0,
             azimuth: 125.0,
@@ -3099,6 +3160,8 @@ mod tests {
             ho: 35.42,           // Observed altitude after corrections
             gha: 245.62,         // Greenwich Hour Angle
             lha: 122.0,          // Local Hour Angle (should be whole number)
+            gha_aries: None,
+            lha_aries: None,
             hc: 35.408,          // Calculated altitude
             intercept: 0.7,
             azimuth: 125.0,
@@ -3152,6 +3215,8 @@ mod tests {
                 ho: 35.0,
                 gha,
                 lha: expected_lha,
+                gha_aries: None,
+                lha_aries: None,
                 hc: 35.0,
                 intercept: 0.0,
                 azimuth: 180.0,
