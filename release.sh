@@ -164,22 +164,26 @@ main() {
     update_cargo_toml "$old_ver" "$new_ver"
     echo "[2/5] Updated Cargo.toml workspace version"
 
-    # 3. Refresh Cargo.lock (cargo check is fast; no full build)
-    echo "[3/5] Running cargo check to refresh Cargo.lock..."
+    # 3. Run clippy — treat warnings as errors so no warnings ship in a release
+    echo "[3/6] Running cargo clippy..."
+    cargo clippy --workspace --all-targets -- -D warnings
+
+    # 4. Refresh Cargo.lock (cargo check is fast; no full build)
+    echo "[4/6] Running cargo check to refresh Cargo.lock..."
     cargo check -q --workspace
 
-    # 4. Commit the version bump
+    # 5. Commit the version bump
     git add "$VERSION_FILE" "$CARGO_TOML" Cargo.lock
     git commit -m "chore: bump version to ${tag}"
-    echo "[4/5] Committed version bump"
+    echo "[5/6] Committed version bump"
 
-    # 5. Create annotated tag (annotated tags trigger GitHub Actions release workflow)
+    # 6. Create annotated tag (annotated tags trigger GitHub Actions release workflow)
     git tag -a "$tag" -m "Release ${tag}"
-    echo "[5/5] Created annotated tag $tag"
+    echo "[6/6] Created annotated tag $tag"
 
     # 6. Push commit and tag
     echo ""
-    echo "Pushing to origin..."
+    echo "Pushing commit and tag to origin..."
     git push origin HEAD
     git push origin "$tag"
 
