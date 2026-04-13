@@ -43,7 +43,9 @@ CARGO_TOML="./Cargo.toml"
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 print_help() {
-    sed -n '2,/^# =\+$/{ /^# =\+$/d; s/^# \{0,1\}//; p }' "$0"
+    # Print lines between the first and second '# ===...' delimiters,
+    # stripping the leading '# ' comment prefix. Works on BSD and GNU awk.
+    awk '/^# ===/{delim++; next} delim==1{sub(/^# ?/,""); print} delim==2{exit}' "$0"
     exit 0
 }
 
