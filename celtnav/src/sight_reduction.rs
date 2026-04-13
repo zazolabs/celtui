@@ -309,27 +309,29 @@ fn normalize_degrees(degrees: f64) -> f64 {
 /// This optimization makes sight reduction table lookups much easier since
 /// tables are indexed by whole degrees.
 ///
-/// **DEPRECATED**: Use `optimize_chosen_position_celestial_body` or
-/// `optimize_chosen_position_star` instead for clearer intent.
+/// **IMPORTANT FOR STARS**: Pass the GHA of the star (not GHA Aries separately).
+/// GHA_star = GHA_Aries + SHA_star. This function will optimize to make LHA of the star whole,
+/// which is correct for both Pub 249 Vol 1 and manual sight reduction.
 ///
 /// # Arguments
 /// * `dr_lat` - Dead reckoning latitude in decimal degrees (North positive, South negative)
 /// * `dr_lon` - Dead reckoning longitude in decimal degrees (East positive, West negative)
-/// * `gha` - Greenwich Hour Angle in decimal degrees
+/// * `gha` - Greenwich Hour Angle of the body in decimal degrees (for stars: GHA_Aries + SHA)
 ///
 /// # Returns
 /// Tuple of (chosen_lat, chosen_lon) optimized for whole-degree LHA
 ///
 /// # Formula
-/// LHA = GHA + Longitude (for both East and West, using signed convention)
+/// LHA = GHA + Longitude (for both East and West, using signed convention where West is negative)
 /// We adjust longitude so LHA is exactly X° 00.0'
 ///
 /// # Examples
 /// ```
 /// use celtnav::sight_reduction::optimize_chosen_position;
 ///
+/// // Example 1: Sun sight
 /// // DR position: 45° 32.5' N, 123° 15.0' W
-/// // GHA: 245° 37.2'
+/// // GHA Sun: 245° 37.2'
 /// let dr_lat = 45.542; // 45° 32.5' N
 /// let dr_lon = -123.25; // 123° 15.0' W (negative for West)
 /// let gha = 245.62; // 245° 37.2'
@@ -342,9 +344,37 @@ fn normalize_degrees(degrees: f64) -> f64 {
 /// // Longitude adjusted so LHA is whole number
 /// let lha = (gha + chosen_lon + 360.0) % 360.0;
 /// assert!((lha - lha.round()).abs() < 0.01);
+///
+/// // Example 2: Pollux star sight (user's correct example)
+/// // GHA Pollux = 86° 03.3' (this is GHA Aries + SHA Pollux combined)
+/// // DR: 40°N, 20°W
+/// let gha_pollux = 86.055; // Already includes SHA
+/// let (chosen_lat, chosen_lon) = optimize_chosen_position(40.0, -20.0, gha_pollux);
+/// // Chosen lon should be ~20° 03.9' W to make LHA Pollux = 66° exactly
 /// ```
 pub fn optimize_chosen_position(dr_lat: f64, dr_lon: f64, gha: f64) -> (f64, f64) {
-    optimize_chosen_position_celestial_body(dr_lat, dr_lon, gha)
+    // Round latitude to nearest whole degree
+    let chosen_lat = dr_lat.round();
+
+    // Calculate LHA with DR longitude
+    // LHA = GHA + Longitude (using signed convention: East +, West -)
+    let lha_with_dr = normalize_degrees(gha + dr_lon);
+
+    // Find fractional part of LHA
+    let lha_frac = lha_with_dr - lha_with_dr.floor();
+
+    // Adjust longitude to make LHA whole
+    // If fractional part <= 0.5, round down (subtract fraction)
+    // If fractional part > 0.5, round up (add to reach next whole degree)
+    let lon_adjustment = if lha_frac <= 0.5 {
+        -lha_frac
+    } else {
+        1.0 - lha_frac
+    };
+
+    let chosen_lon = dr_lon + lon_adjustment;
+
+    (chosen_lat, chosen_lon)
 }
 
 /// Optimizes the chosen position for celestial bodies (Sun, Moon, Planets)
@@ -400,72 +430,42 @@ pub fn optimize_chosen_position_celestial_body(dr_lat: f64, dr_lon: f64, gha: f6
     (chosen_lat, chosen_lon)
 }
 
-/// Optimizes the chosen position for star sights (Pub 249 Vol 1 organization)
+/// **DEPRECATED**: This function was based on a misunderstanding. DO NOT USE!
 ///
-/// **CRITICAL**: For stars, we optimize to make LHA Aries a whole number, NOT the LHA of the star!
-/// This is how Pub 249 Vol 1 sight reduction tables are organized.
+/// **THE PROBLEM**: This function optimizes to make LHA Aries whole, which is INCORRECT
+/// for actual celestial navigation calculations. While Pub 249 Vol 1 tables are organized
+/// by LHA Aries, the actual sight reduction calculation uses LHA of the star itself.
 ///
-/// The LHA of the star itself is calculated as: LHA_star = LHA_Aries + SHA_star
-/// and will NOT be a whole number (which is correct and expected).
+/// **CORRECT APPROACH**: Use `optimize_chosen_position()` with GHA of the star:
+/// ```ignore
+/// let gha_star = gha_aries + sha;  // Combine GHA Aries and SHA
+/// let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_lat, dr_lon, gha_star);
+/// ```
 ///
-/// # Background
-/// Star sight reduction tables (Pub 249 Vol 1) are indexed by:
-/// - Latitude (whole degrees)
-/// - LHA Aries (whole degrees)
-/// - Star name
+/// This makes LHA of the star whole, which is correct for sight reduction calculations.
 ///
-/// The SHA (Sidereal Hour Angle) of the star is looked up separately and is generally
-/// not a whole number. This is different from Sun/Moon/Planet tables which use LHA of the body.
+/// **USER EXAMPLE THAT PROVES THIS**: Pollux, 10 Sept 2016, 00:28:12 UTC:
+/// - GHA Pollux = 86° 03.3' (almanac value, already GHA Aries + SHA Pollux)
+/// - DR Lon ≈ 20° W
+/// - Correct: Optimize to make LHA Pollux = 66° (whole) → gives Az = 104°, Hc = 46° 04' ✓
+/// - Wrong: Optimize to make LHA Aries whole → gives wrong Az and Hc ✗
 ///
 /// # Arguments
-/// * `dr_lat` - Dead reckoning latitude in decimal degrees (North positive, South negative)
-/// * `dr_lon` - Dead reckoning longitude in decimal degrees (East positive, West negative)
-/// * `gha_aries` - Greenwich Hour Angle of Aries (♈) in decimal degrees
+/// * `dr_lat` - Dead reckoning latitude in decimal degrees
+/// * `dr_lon` - Dead reckoning longitude in decimal degrees (East +, West -)
+/// * `gha_aries` - Greenwich Hour Angle of Aries in decimal degrees
 ///
 /// # Returns
-/// Tuple of (chosen_lat, chosen_lon) optimized for whole-degree LHA Aries
+/// Tuple of (chosen_lat, chosen_lon) - **BUT RESULTS ARE INCORRECT FOR STAR SIGHTS!**
 ///
-/// # Examples
-/// ```
-/// use celtnav::sight_reduction::optimize_chosen_position_star;
-///
-/// // DR position and GHA Aries
-/// let dr_lat = 40.5;
-/// let dr_lon = -70.25;
-/// let gha_aries = 145.7;
-///
-/// let (chosen_lat, chosen_lon) = optimize_chosen_position_star(dr_lat, dr_lon, gha_aries);
-///
-/// // LHA Aries should be a whole number (for Pub 249 Vol 1 lookup)
-/// let lha_aries = (gha_aries + chosen_lon + 360.0) % 360.0;
-/// assert!((lha_aries - lha_aries.round()).abs() < 0.01);
-///
-/// // LHA star = LHA Aries + SHA (will NOT be whole, and that's correct!)
-/// let sha_pollux = 243.4;
-/// let lha_pollux = (lha_aries + sha_pollux) % 360.0;
-/// // lha_pollux may be fractional - this is expected and correct
-/// ```
+#[deprecated(
+    since = "0.1.0",
+    note = "This function is INCORRECT. Use optimize_chosen_position() with GHA of the star (GHA Aries + SHA) instead."
+)]
 pub fn optimize_chosen_position_star(dr_lat: f64, dr_lon: f64, gha_aries: f64) -> (f64, f64) {
-    // Round latitude to nearest whole degree
-    let chosen_lat = dr_lat.round();
-
-    // Calculate LHA Aries with DR longitude
-    // LHA Aries = GHA Aries + Longitude
-    let lha_aries_with_dr = normalize_degrees(gha_aries + dr_lon);
-
-    // Find fractional part of LHA Aries
-    let lha_aries_frac = lha_aries_with_dr - lha_aries_with_dr.floor();
-
-    // Adjust longitude to make LHA ARIES whole (not LHA star!)
-    let lon_adjustment = if lha_aries_frac <= 0.5 {
-        -lha_aries_frac
-    } else {
-        1.0 - lha_aries_frac
-    };
-
-    let chosen_lon = dr_lon + lon_adjustment;
-
-    (chosen_lat, chosen_lon)
+    // This function is deprecated and produces incorrect results
+    // Kept only for backward compatibility, but should not be used
+    optimize_chosen_position_celestial_body(dr_lat, dr_lon, gha_aries)
 }
 
 #[cfg(test)]
@@ -838,234 +838,6 @@ mod tests {
         // due to different LHA values - this is just demonstrating the calculation works
         assert!(hc_west < 0.0, "Body below horizon for LHA 220.4° at this position");
         assert!(hc_east > 0.0, "Body above horizon for LHA 106.4° at this position");
-    }
-
-    // ===== Tests for star-specific optimization (Pub 249 Vol 1) =====
-
-    #[test]
-    fn test_optimize_star_chosen_position_lha_aries_whole() {
-        // For stars, we optimize to make LHA Aries a whole number (Pub 249 Vol 1 organization)
-        // NOT LHA of the star itself
-
-        // Example: Pollux with SHA = 243.4°
-        let dr_lat = 40.5;
-        let dr_lon = -70.25; // West
-        let gha_aries = 145.7;
-
-        let (chosen_lat, chosen_lon) = optimize_chosen_position_star(dr_lat, dr_lon, gha_aries);
-
-        // Latitude should be rounded
-        assert_eq!(chosen_lat, 41.0, "Latitude should be rounded to nearest whole degree");
-
-        // LHA Aries MUST be whole
-        let lha_aries = (gha_aries + chosen_lon + 360.0) % 360.0;
-        assert!(
-            (lha_aries - lha_aries.round()).abs() < 0.01,
-            "LHA Aries should be whole number, got {:.2}°, fractional part: {:.4}",
-            lha_aries,
-            lha_aries - lha_aries.round()
-        );
-
-        // LHA star will NOT be whole (that's correct for Pub 249 Vol 1!)
-        let sha_pollux = 243.4;
-        let lha_pollux = (lha_aries + sha_pollux) % 360.0;
-        // lha_pollux doesn't need to be whole - we accept any value here
-        // The important thing is that LHA Aries is whole
-        assert!(
-            lha_pollux >= 0.0 && lha_pollux < 360.0,
-            "LHA star should be valid angle, got {:.2}°",
-            lha_pollux
-        );
-    }
-
-    #[test]
-    fn test_optimize_star_vs_celestial_body_different_results() {
-        // For the same DR position and GHA values, star optimization and
-        // celestial body optimization should give DIFFERENT results
-
-        let dr_lat = 40.0;
-        let dr_lon = -70.0;
-        let gha_aries = 150.0;
-        let sha_pollux = 243.4;
-        let gha_pollux = (gha_aries + sha_pollux) % 360.0; // 393.4 - 360 = 33.4°
-
-        // Star optimization: optimize based on GHA Aries
-        let (star_lat, star_lon) = optimize_chosen_position_star(dr_lat, dr_lon, gha_aries);
-
-        // Celestial body optimization: optimize based on GHA of body
-        let (body_lat, body_lon) = optimize_chosen_position_celestial_body(dr_lat, dr_lon, gha_pollux);
-
-        // Latitudes should be the same (both round to nearest whole degree)
-        assert_eq!(star_lat, body_lat, "Both should round latitude the same way");
-
-        // Longitudes should be DIFFERENT because we're optimizing different LHAs
-        assert!(
-            (star_lon - body_lon).abs() > 0.1,
-            "Star and body optimizations should give different longitudes. Star: {:.2}°, Body: {:.2}°",
-            star_lon,
-            body_lon
-        );
-
-        // Verify star optimization makes LHA Aries whole
-        let lha_aries = (gha_aries + star_lon + 360.0) % 360.0;
-        assert!(
-            (lha_aries - lha_aries.round()).abs() < 0.01,
-            "Star optimization should make LHA Aries whole"
-        );
-
-        // Verify body optimization makes LHA of body whole
-        let lha_body = (gha_pollux + body_lon + 360.0) % 360.0;
-        assert!(
-            (lha_body - lha_body.round()).abs() < 0.01,
-            "Body optimization should make LHA of body whole"
-        );
-    }
-
-    #[test]
-    fn test_pub249_vol1_organization() {
-        // Verify that for stars, we organize by LHA Aries (whole number)
-        // This matches Pub 249 Vol 1 table organization
-
-        // Test case: Observer at 40°N, 70°W
-        // GHA Aries = 150°
-        // SHA Sirius = 258.6°
-
-        let (_chosen_lat, chosen_lon) = optimize_chosen_position_star(40.0, -70.0, 150.0);
-
-        let lha_aries = (150.0 + chosen_lon + 360.0) % 360.0;
-        assert!(
-            (lha_aries.round() - lha_aries).abs() < 0.1,
-            "LHA Aries must be whole for Pub 249 Vol 1. Got {:.2}°",
-            lha_aries
-        );
-
-        // When we add SHA Sirius, LHA Sirius won't be whole - and that's OK
-        let lha_sirius = (lha_aries + 258.6) % 360.0;
-        // lha_sirius is allowed to be fractional - we don't test for whole number
-        assert!(
-            lha_sirius >= 0.0 && lha_sirius < 360.0,
-            "LHA Sirius should be valid angle"
-        );
-    }
-
-    #[test]
-    fn test_star_optimization_multiple_scenarios() {
-        // Test star optimization with various GHA Aries values
-
-        let test_cases = vec![
-            (40.0, -70.0, 150.0),    // Standard case
-            (35.5, -120.5, 200.5),   // West coast US
-            (50.2, 5.3, 45.8),       // English Channel
-            (-33.9, 18.4, 300.1),    // Cape Town
-        ];
-
-        for (dr_lat, dr_lon, gha_aries) in test_cases {
-            let (chosen_lat, chosen_lon) = optimize_chosen_position_star(dr_lat, dr_lon, gha_aries);
-
-            // Latitude should be rounded
-            assert!(
-                (chosen_lat - dr_lat).abs() <= 0.5,
-                "Chosen lat should be within 0.5° of DR (rounded)"
-            );
-
-            // LHA Aries must be whole
-            let lha_aries = (gha_aries + chosen_lon + 360.0) % 360.0;
-            assert!(
-                (lha_aries - lha_aries.round()).abs() < 0.01,
-                "LHA Aries must be whole. DR: ({:.1}, {:.1}), GHA♈: {:.1}, LHA♈: {:.2}",
-                dr_lat, dr_lon, gha_aries, lha_aries
-            );
-
-            // Chosen position should be close to DR
-            assert!(
-                (chosen_lon - dr_lon).abs() <= 1.0,
-                "Chosen lon should be within 1° of DR"
-            );
-        }
-    }
-
-    #[test]
-    fn test_star_optimization_edge_cases() {
-        // Test edge cases: GHA Aries near 0° and 360°
-
-        // Near 0°
-        let (lat1, lon1) = optimize_chosen_position_star(45.0, -70.0, 0.5);
-        let lha_aries1 = (0.5 + lon1 + 360.0) % 360.0;
-        assert!(
-            (lha_aries1 - lha_aries1.round()).abs() < 0.01,
-            "LHA Aries should be whole near 0°"
-        );
-
-        // Near 360°
-        let (lat2, lon2) = optimize_chosen_position_star(45.0, -70.0, 359.5);
-        let lha_aries2 = (359.5 + lon2 + 360.0) % 360.0;
-        assert!(
-            (lha_aries2 - lha_aries2.round()).abs() < 0.01,
-            "LHA Aries should be whole near 360°"
-        );
-
-        // Both latitudes should be 45°
-        assert_eq!(lat1, 45.0);
-        assert_eq!(lat2, 45.0);
-    }
-
-    #[test]
-    fn test_pollux_example_star_vs_body_optimization() {
-        // Real-world example: Pollux observation
-        // This demonstrates why stars need different optimization
-
-        // Pollux data:
-        // SHA Pollux = 243.4°
-        // Dec Pollux = N 28° 01.6'
-        // DR: 40°N, 70°W
-        // GHA Aries = 145.7°
-
-        let dr_lat = 40.0;
-        let dr_lon = -70.0;
-        let gha_aries = 145.7;
-        let sha_pollux = 243.4;
-        let gha_pollux = normalize_degrees(gha_aries + sha_pollux); // 389.1 - 360 = 29.1°
-
-        // CORRECT (Star): Optimize based on GHA Aries
-        let (star_lat, star_lon) = optimize_chosen_position_star(dr_lat, dr_lon, gha_aries);
-        let lha_aries = normalize_degrees(gha_aries + star_lon);
-        let lha_pollux_correct = normalize_degrees(lha_aries + sha_pollux);
-
-        // WRONG (Body): Optimize based on GHA Pollux
-        let (body_lat, body_lon) = optimize_chosen_position_celestial_body(dr_lat, dr_lon, gha_pollux);
-        let lha_pollux_wrong = normalize_degrees(gha_pollux + body_lon);
-
-        // Both round latitude the same
-        assert_eq!(star_lat, 40.0);
-        assert_eq!(body_lat, 40.0);
-
-        // LHA Aries should be whole with star optimization
-        assert!(
-            (lha_aries - lha_aries.round()).abs() < 0.01,
-            "Star optimization: LHA Aries should be whole, got {:.2}°", lha_aries
-        );
-
-        // LHA Pollux should be whole with body optimization
-        assert!(
-            (lha_pollux_wrong - lha_pollux_wrong.round()).abs() < 0.01,
-            "Body optimization: LHA Pollux should be whole, got {:.2}°", lha_pollux_wrong
-        );
-
-        // The two LHAs for Pollux should be DIFFERENT
-        // This is the bug we're fixing!
-        assert!(
-            (lha_pollux_correct - lha_pollux_wrong).abs() > 0.1,
-            "Star and body optimizations should give different LHA for Pollux. \
-             Correct (via LHA Aries): {:.2}°, Wrong (via GHA Pollux): {:.2}°",
-            lha_pollux_correct, lha_pollux_wrong
-        );
-
-        // The chosen longitudes should also be different
-        assert!(
-            (star_lon - body_lon).abs() > 0.1,
-            "Chosen longitudes should differ. Star: {:.2}°, Body: {:.2}°",
-            star_lon, body_lon
-        );
     }
 
     #[test]

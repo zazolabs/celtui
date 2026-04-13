@@ -4,12 +4,12 @@
 //! computing their Lines of Position, and calculating a fix from multiple LOPs.
 
 use chrono::{NaiveDate, NaiveTime, TimeZone, Utc};
-use celtnav::almanac::{CelestialBody as AlmanacBody, Planet, get_body_position, gha_aries};
+use celtnav::almanac::{CelestialBody as AlmanacBody, Planet, get_body_position};
 use celtnav::sight_reduction::{
     compute_altitude, compute_azimuth, compute_intercept, SightData,
     apply_refraction_correction, apply_dip_correction,
     apply_semidiameter_correction, apply_parallax_correction,
-    optimize_chosen_position_celestial_body, optimize_chosen_position_star,
+    optimize_chosen_position,
 };
 use celtnav::fix_calculation::{LineOfPosition, fix_from_multiple_lops, Fix, advance_lop};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -86,12 +86,10 @@ impl SightCelestialBody {
 /// - The chosen/assumed position (AP) where the calculation was performed
 /// - The observed altitude (Ho) after all corrections
 /// - The Greenwich Hour Angle (GHA) of the body
-/// - The Local Hour Angle (LHA) at the chosen position
+/// - The Local Hour Angle (LHA) at the chosen position (optimized to be whole number)
 /// - The calculated altitude (Hc) at that position
 /// - The intercept distance (toward/away from the body)
 /// - The true azimuth bearing to the body
-///
-/// For star sights, also includes GHA Aries since stars use Pub 249 Vol 1 organization.
 ///
 /// To plot the LOP on a chart:
 /// 1. Mark the chosen position (AP)
@@ -108,17 +106,11 @@ pub struct LopDisplayData {
     pub chosen_lon: f64,
     /// Observed altitude (Ho) in degrees after all corrections
     pub ho: f64,
-    /// Greenwich Hour Angle (GHA) in degrees (for stars, this is GHA of the star, not GHA Aries)
+    /// Greenwich Hour Angle (GHA) in degrees
+    /// For stars, this is GHA of the star (GHA Aries + SHA combined)
     pub gha: f64,
-    /// GHA Aries in degrees (only for star sights, None for Sun/Moon/Planets)
-    pub gha_aries: Option<f64>,
-    /// Local Hour Angle (LHA) in degrees
-    /// - For stars: LHA of the star (LHA_Aries + SHA), may be fractional
-    /// - For other bodies: LHA of the body, should be whole number after optimization
+    /// Local Hour Angle (LHA) in degrees (should be whole number after optimization)
     pub lha: f64,
-    /// LHA Aries in degrees (only for star sights, None for Sun/Moon/Planets)
-    /// This should be a whole number after optimization for Pub 249 Vol 1 compatibility
-    pub lha_aries: Option<f64>,
     /// Calculated altitude (Hc) in degrees at the chosen position
     pub hc: f64,
     /// Intercept in nautical miles (positive = toward body, negative = away from body)
@@ -794,17 +786,10 @@ impl AutoComputeForm {
         let position = get_body_position(almanac_body, datetime)?;
 
         // Optimize chosen position for easier sight reduction
-        // CRITICAL: For stars vs other bodies, we optimize differently:
-        // - Stars: Optimize based on GHA Aries (Pub 249 Vol 1 organization)
-        // - Sun/Moon/Planets: Optimize based on GHA of body (standard practice)
-        let (chosen_lat, chosen_lon) = if sight.is_star() {
-            // For stars: Make LHA Aries a whole number
-            let gha_aries_val = gha_aries(datetime);
-            optimize_chosen_position_star(dr_latitude, dr_longitude, gha_aries_val)
-        } else {
-            // For Sun/Moon/Planets: Make LHA of body a whole number
-            optimize_chosen_position_celestial_body(dr_latitude, dr_longitude, position.gha)
-        };
+        // IMPORTANT: For ALL bodies (including stars), we optimize based on GHA of the body.
+        // For stars, position.gha already contains GHA Aries + SHA, which is the correct value.
+        // This makes LHA of the body (star) a whole number, which is correct for sight reduction.
+        let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_latitude, dr_longitude, position.gha);
 
         // Apply corrections to get observed altitude (Ho)
         // Correction order is critical: Hs + IE + dip + refraction + SD + parallax
@@ -833,18 +818,8 @@ impl AutoComputeForm {
         }
 
         // Calculate LHA using optimized chosen position
-        // For stars, we also need to track LHA Aries separately
-        let (lha, gha_aries_val, lha_aries_val) = if sight.is_star() {
-            let gha_aries_val = gha_aries(datetime);
-            let lha_aries = (gha_aries_val + chosen_lon + 360.0) % 360.0;
-            // For stars: LHA star = LHA Aries + SHA (which is already in position.gha calculation)
-            let lha_star = (position.gha + chosen_lon + 360.0) % 360.0;
-            (lha_star, Some(gha_aries_val), Some(lha_aries))
-        } else {
-            // For Sun/Moon/Planets: just regular LHA
-            let lha = (position.gha + chosen_lon + 360.0) % 360.0;
-            (lha, None, None)
-        };
+        // LHA = GHA + Longitude (using signed convention: East +, West -)
+        let lha = (position.gha + chosen_lon + 360.0) % 360.0;
 
         // Compute Hc and Zn using chosen position
         let sight_data = SightData {
@@ -872,9 +847,7 @@ impl AutoComputeForm {
             chosen_lon,
             ho,
             gha: position.gha,
-            gha_aries: gha_aries_val,
             lha,
-            lha_aries: lha_aries_val,
             hc,
             intercept,
             azimuth: zn,
@@ -2818,9 +2791,7 @@ mod tests {
             chosen_lon: -123.25,
             ho: 35.5,
             gha: 245.62,
-            gha_aries: Some(100.0),  // Star sight includes GHA Aries
             lha: 122.0,
-            lha_aries: Some(223.0),  // Star sight includes LHA Aries
             hc: 35.408,
             intercept: 2.3,
             azimuth: 125.0,
@@ -2845,9 +2816,7 @@ mod tests {
             chosen_lon: -74.0,
             ho: 42.15,
             gha: 180.5,
-            gha_aries: None,  // Sun sight doesn't include GHA Aries
             lha: 106.0,
-            lha_aries: None,  // Sun sight doesn't include LHA Aries
             hc: 42.0,
             intercept: 2.5,
             azimuth: 215.0,
@@ -2865,9 +2834,7 @@ mod tests {
             chosen_lon: -74.0,
             ho: 27.72,
             gha: 215.33,
-            gha_aries: None,  // Planet sight doesn't include GHA Aries
             lha: 141.0,
-            lha_aries: None,  // Planet sight doesn't include LHA Aries
             hc: 28.0,
             intercept: -1.7,
             azimuth: 45.0,
@@ -2885,9 +2852,7 @@ mod tests {
             chosen_lon: -74.0,
             ho: 30.0,
             gha: 95.25,
-            gha_aries: None,  // Moon sight doesn't include GHA Aries
             lha: 21.0,
-            lha_aries: None,  // Moon sight doesn't include LHA Aries
             hc: 30.0,
             intercept: 0.0,
             azimuth: 90.0,
@@ -2914,9 +2879,7 @@ mod tests {
             chosen_lon: -74.0,
             ho: 42.15,
             gha: 180.5,
-            gha_aries: None,
             lha: 106.0,
-            lha_aries: None,
             hc: 42.0,
             intercept: 2.0,
             azimuth: 180.0,
@@ -3001,9 +2964,7 @@ mod tests {
             chosen_lon: -5.0,
             ho: 45.6,
             gha: 180.25,
-            gha_aries: Some(100.0),
             lha: 175.0,
-            lha_aries: Some(95.0),
             hc: 45.5,
             intercept: 3.2,
             azimuth: 225.0,
@@ -3029,9 +2990,7 @@ mod tests {
             chosen_lon: -123.0,
             ho: 35.1,
             gha: 180.0,
-            gha_aries: None,
             lha: 57.0,
-            lha_aries: None,
             hc: 35.0,
             intercept: 2.0,
             azimuth: 125.0,
@@ -3056,9 +3015,7 @@ mod tests {
             chosen_lon: -123.0,
             ho: 35.1,
             gha: 180.0,
-            gha_aries: None,
             lha: 57.0,
-            lha_aries: None,
             hc: 35.0,
             intercept: 2.0,
             azimuth: 125.0,
@@ -3083,9 +3040,7 @@ mod tests {
             chosen_lon: -123.0,
             ho: 35.1,
             gha: 180.0,
-            gha_aries: None,
             lha: 57.0,
-            lha_aries: None,
             hc: 35.0,
             intercept: 2.0,
             azimuth: 125.0,
@@ -3143,9 +3098,7 @@ mod tests {
             chosen_lon: -123.62,
             ho: 35.42,           // Observed altitude after corrections
             gha: 245.62,         // Greenwich Hour Angle
-            gha_aries: None,     // Not a star
             lha: 122.0,          // Local Hour Angle (should be whole number)
-            lha_aries: None,     // Not a star
             hc: 35.408,          // Calculated altitude
             intercept: 0.7,
             azimuth: 125.0,
@@ -3198,9 +3151,7 @@ mod tests {
                 chosen_lon,
                 ho: 35.0,
                 gha,
-                gha_aries: None,
                 lha: expected_lha,
-                lha_aries: None,
                 hc: 35.0,
                 intercept: 0.0,
                 azimuth: 180.0,
