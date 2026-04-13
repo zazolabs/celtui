@@ -3,30 +3,31 @@
 //!
 //! TWO METHODS for star sight reduction:
 //!
-//! METHOD 1: Pub 249 Vol 1 TABLES (User's manual method)
+//! METHOD 1: Pub 249 Vol 1 TABLES (Manual method with paper tables)
 //! - GHA Aries = 86° 03.3' = 86.055° (from almanac)
-//! - Optimize to make LHA Aries whole: chosen lon = 20° 03.9' W = -20.065°
-//! - LHA Aries = 86.055 - 20.065 = 66° (whole number)
+//! - DR Lon = 20° W = -20°
+//! - MUST optimize chosen lon to make LHA Aries whole (for table lookup)
+//! - Chosen lon = 20° 03.9' W = -20.065° → LHA Aries = 66° (whole)
 //! - Look up in Pub 249 Vol 1 with LHA Aries=66° and "Pollux"
 //! - Result from tables: Hc = 46° 04', Az = 104° T
 //!
-//! METHOD 2: DIRECT CALCULATION (Our spherical trig method - what we test here)
+//! METHOD 2: DIRECT CALCULATION (Our spherical trig method - what we implement)
 //! - GHA Aries = 86° 03.3' = 86.055° (from almanac)
 //! - SHA Pollux = 243° 26.1' = 243.435° (from star catalog)
 //! - GHA Pollux = GHA Aries + SHA = 86.055 + 243.435 = 329.490°
-//! - Optimize to make LHA Pollux whole: chosen lon = 20° 29.4' W = -20.490°
-//! - LHA Pollux = 329.490 - 20.490 = 309° (whole number)
-//! - Calculate Hc using spherical trig with LHA Pollux = 309°
-//! - Both methods should give similar Hc and Az values
+//! - DR Lon = 20° W = -20° (use DR position directly, NO optimization)
+//! - LHA Pollux = 329.490 - 20 = 309.490° (can have decimals for trig!)
+//! - LHA Aries = 86.055 - 20 = 66.055° (also with decimals)
+//! - Calculate Hc using spherical trig with exact LHA values
+//! - Both methods should give similar Hc ≈ 46° 04', Az ≈ 104° T
 //!
-//! CRITICAL: We optimize to make LHA of the STAR whole, NOT LHA Aries!
-
-use celtnav::sight_reduction::optimize_chosen_position;
+//! KEY DIFFERENCE: Table method requires whole LHA (optimization),
+//!                 Trig method uses exact DR position (no optimization needed)!
 
 #[test]
-fn test_pollux_user_example_optimization() {
+fn test_pollux_direct_calculation_no_optimization() {
     // Pollux, 10 Sept 2016, 06:28:12 UTC
-    // Using METHOD 2: Direct calculation with LHA of star
+    // Using METHOD 2: Direct spherical trig calculation (NO optimization)
 
     // From almanac: GHA Aries = 86° 03.3' = 86.055°
     // From catalog: SHA Pollux = 243° 26.1' = 243.435°
@@ -34,52 +35,44 @@ fn test_pollux_user_example_optimization() {
     let sha_pollux = 243.435;
     let gha_pollux = (gha_aries + sha_pollux) % 360.0;  // = 329.490°
 
-    let dr_lat = 40.0;  // 40°N
-    let dr_lon = -20.0;  // 20°W
+    let dr_lat = 40.0;  // 40°N (DR position)
+    let dr_lon = -20.0;  // 20°W (DR position)
 
-    // Optimize using GHA of Pollux to make LHA Pollux whole
-    let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_lat, dr_lon, gha_pollux);
+    // For trig calculations, NO optimization needed - use DR position directly
+    let chosen_lat = dr_lat;
+    let chosen_lon = dr_lon;
 
-    // Latitude should be rounded to 40°
-    assert_eq!(chosen_lat, 40.0, "Latitude should be rounded to 40°");
+    // Verify we're using DR position as-is
+    assert_eq!(chosen_lat, 40.0, "Should use DR latitude directly");
+    assert_eq!(chosen_lon, -20.0, "Should use DR longitude directly");
 
-    // For METHOD 2, chosen longitude makes LHA Pollux whole
-    // LHA = GHA Pollux + Lon = 329.490 + Lon (mod 360)
-    // To get LHA = 309° (nearest whole): Lon = 309 - 329.490 = -20.490° ✓
-    let expected_lon = -20.490;  // 20° 29.4' W
+    // Calculate LHA of Pollux using exact DR position
+    let lha_pollux = (gha_pollux + dr_lon + 360.0) % 360.0;
+    // LHA Pollux = 329.490 - 20 = 309.490° (can have decimals!)
+    let expected_lha_pollux: f64 = 309.490;
     assert!(
-        (chosen_lon - expected_lon).abs() < 0.01,
-        "Chosen lon should be near {:.3}° (20° 29.4' W), got {:.3}°",
-        expected_lon, chosen_lon
+        (lha_pollux - expected_lha_pollux).abs() < 0.01,
+        "LHA Pollux should be {:.3}°, got {:.3}°",
+        expected_lha_pollux, lha_pollux
     );
 
-    // Calculate LHA of Pollux
-    let lha_pollux = (gha_pollux + chosen_lon + 360.0) % 360.0;
-
-    // Should be exactly 309° (whole number)
+    // Calculate LHA Aries for comparison with Pub 249 Vol 1
+    let lha_aries = (gha_aries + dr_lon + 360.0) % 360.0;
+    // LHA Aries = 86.055 - 20 = 66.055° (also with decimals)
+    let expected_lha_aries: f64 = 66.055;
     assert!(
-        (lha_pollux - 309.0).abs() < 0.01,
-        "LHA Pollux should be 309°, got {:.2}°",
-        lha_pollux
+        (lha_aries - expected_lha_aries).abs() < 0.01,
+        "LHA Aries should be {:.3}°, got {:.3}°",
+        expected_lha_aries, lha_aries
     );
 
-    // Verify it's a whole number
-    let lha_frac = lha_pollux - lha_pollux.round();
-    assert!(
-        lha_frac.abs() < 0.01,
-        "LHA should be whole number, fractional part: {:.4}",
-        lha_frac
-    );
-
-    // ALSO calculate LHA Aries for comparison with Pub 249 Vol 1
-    let lha_aries = (gha_aries + chosen_lon + 360.0) % 360.0;
-    // LHA Aries = 86.055 - 20.490 = 65.565° (NOT whole, because we didn't optimize for it)
-    // For Pub 249 Vol 1, you would optimize differently to get LHA Aries = 66° whole
-    assert!(
-        (lha_aries - 65.565).abs() < 0.01,
-        "LHA Aries calculated as {:.3}° (not optimized for tables)",
-        lha_aries
-    );
+    // For Pub 249 Vol 1 table lookup, user would:
+    // - Round LHA Aries to nearest whole: 66°
+    // - Enter table with LHA Aries=66° and star name "Pollux"
+    // - Get Hc ≈ 46° 04', Az ≈ 104° T
+    //
+    // Our spherical trig calculation uses exact LHA = 309.490° and should
+    // give very similar results without requiring optimization!
 }
 
 #[test]

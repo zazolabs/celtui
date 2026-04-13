@@ -83,44 +83,44 @@ impl SightCelestialBody {
 ///
 /// Contains all information a navigator needs to plot a single LOP on a chart:
 /// - The celestial body observed
-/// - The chosen/assumed position (AP) where the calculation was performed
+/// - The DR position used for the calculation
 /// - The observed altitude (Ho) after all corrections
 /// - The Greenwich Hour Angle (GHA) of the body
-/// - The Local Hour Angle (LHA) at the chosen position (optimized to be whole number)
-/// - The calculated altitude (Hc) at that position
+/// - The Local Hour Angle (LHA) at the DR position (can have decimal values)
+/// - The calculated altitude (Hc) at that position using spherical trigonometry
 /// - The intercept distance (toward/away from the body)
 /// - The true azimuth bearing to the body
 ///
 /// For stars, also includes GHA Aries and LHA Aries for Pub 249 Vol 1 table lookup comparison.
 ///
 /// To plot the LOP on a chart:
-/// 1. Mark the chosen position (AP)
-/// 2. Draw a line from AP along the azimuth bearing
+/// 1. Mark the DR position
+/// 2. Draw a line from DR along the azimuth bearing
 /// 3. Advance (if toward) or retreat (if away) along that line by the intercept distance
 /// 4. Draw the LOP perpendicular to the azimuth at that advanced point
 #[derive(Debug, Clone)]
 pub struct LopDisplayData {
     /// Name of the celestial body (Sun, Moon, Venus, star name, etc.)
     pub body_name: String,
-    /// Chosen/Assumed position latitude in decimal degrees (positive = North, negative = South)
+    /// DR position latitude in decimal degrees (positive = North, negative = South)
     pub chosen_lat: f64,
-    /// Chosen/Assumed position longitude in decimal degrees (positive = East, negative = West)
+    /// DR position longitude in decimal degrees (positive = East, negative = West)
     pub chosen_lon: f64,
     /// Observed altitude (Ho) in degrees after all corrections
     pub ho: f64,
     /// Greenwich Hour Angle (GHA) in degrees
     /// For stars, this is GHA of the star (GHA Aries + SHA combined)
     pub gha: f64,
-    /// Local Hour Angle (LHA) in degrees (should be whole number after optimization)
+    /// Local Hour Angle (LHA) in degrees (can have decimal values for trig calculations)
     /// For stars, this is LHA of the star used in spherical trig calculations
     pub lha: f64,
     /// GHA Aries in degrees (only for stars, None for other bodies)
     /// For Pub 249 Vol 1 table lookup comparison
     pub gha_aries: Option<f64>,
     /// LHA Aries in degrees (only for stars, None for other bodies)
-    /// For Pub 249 Vol 1 table lookup: enter tables with LHA Aries and star name
+    /// For Pub 249 Vol 1 table lookup: round to nearest whole degree and enter tables with star name
     pub lha_aries: Option<f64>,
-    /// Calculated altitude (Hc) in degrees at the chosen position
+    /// Calculated altitude (Hc) in degrees using spherical trigonometry
     pub hc: f64,
     /// Intercept in nautical miles (positive = toward body, negative = away from body)
     pub intercept: f64,
@@ -794,11 +794,11 @@ impl AutoComputeForm {
         let almanac_body = sight.body.to_almanac_body();
         let position = get_body_position(almanac_body, datetime)?;
 
-        // Optimize chosen position for easier sight reduction
-        // IMPORTANT: For ALL bodies (including stars), we optimize based on GHA of the body.
-        // For stars, position.gha already contains GHA Aries + SHA, which is the correct value.
-        // This makes LHA of the body (star) a whole number, which is correct for sight reduction.
-        let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_latitude, dr_longitude, position.gha);
+        // For spherical trigonometry calculations, use DR position directly
+        // (No optimization needed - LHA can have decimal values)
+        // Note: Optimization is only needed for Pub 249 table lookups
+        let chosen_lat = dr_latitude;
+        let chosen_lon = dr_longitude;
 
         // Apply corrections to get observed altitude (Ho)
         // Correction order is critical: Hs + IE + dip + refraction + SD + parallax
@@ -826,11 +826,12 @@ impl AutoComputeForm {
             ho += apply_parallax_correction(0.95, ho);
         }
 
-        // Calculate LHA using optimized chosen position
+        // Calculate LHA using DR position
         // LHA = GHA + Longitude (using signed convention: East +, West -)
+        // For trig calculations, LHA can have decimal values (no need to optimize)
         let lha = (position.gha + chosen_lon + 360.0) % 360.0;
 
-        // Compute Hc and Zn using chosen position
+        // Compute Hc and Zn using DR position
         let sight_data = SightData {
             latitude: chosen_lat,
             declination: position.declination,
@@ -849,12 +850,13 @@ impl AutoComputeForm {
             dr_longitude,
         };
 
-        // For stars, also calculate GHA Aries and LHA Aries for table lookup comparison
-        let (gha_aries, lha_aries) = if let SightCelestialBody::Star(star_name) = &sight.body {
-            use celtnav::almanac::{gha_aries as calc_gha_aries, find_star};
+        // For stars, also calculate GHA Aries and LHA Aries for Pub 249 Vol 1 comparison
+        // These values allow user to verify against table lookups
+        let (gha_aries, lha_aries) = if let SightCelestialBody::Star(_star_name) = &sight.body {
+            use celtnav::almanac::gha_aries as calc_gha_aries;
 
             let gha_aries_val = calc_gha_aries(datetime);
-            let lha_aries_val = (gha_aries_val + chosen_lon + 360.0) % 360.0;
+            let lha_aries_val = (gha_aries_val + dr_longitude + 360.0) % 360.0;
 
             (Some(gha_aries_val), Some(lha_aries_val))
         } else {
@@ -3116,8 +3118,8 @@ mod tests {
     }
 
     #[test]
-    fn test_chosen_position_is_optimized() {
-        // Test that chosen position is optimized (latitude rounded, longitude adjusted for whole LHA)
+    fn test_chosen_position_uses_dr_position() {
+        // Test that chosen position equals DR position (no optimization for trig calculations)
         let mut form = AutoComputeForm::new();
 
         // Set up a sight with fractional position
@@ -3128,8 +3130,8 @@ mod tests {
             sextant_altitude: "35 30.0".to_string(),
             index_error: "0".to_string(),
             height_of_eye: "10".to_string(),
-            dr_latitude: "45 32.5".to_string(),  // 45.542° should round to 46°
-            dr_longitude: "123 15.0".to_string(), // Will be adjusted for whole LHA
+            dr_latitude: "45 32.5".to_string(),  // 45° 32.5' = 45.542°
+            dr_longitude: "123 15.0".to_string(), // 123° 15.0' = 123.25°
             lat_direction: 'N',
             lon_direction: 'W',
         };
@@ -3143,10 +3145,14 @@ mod tests {
         if !form.lop_data.is_empty() {
             let lop = &form.lop_data[0];
 
-            // Chosen latitude should be rounded to whole degree
-            let lat_frac = lop.chosen_lat - lop.chosen_lat.floor();
-            assert!(lat_frac < 0.01 || lat_frac > 0.99,
-                   "Chosen latitude should be whole degree, got {}", lop.chosen_lat);
+            // Chosen position should equal DR position (no optimization)
+            let expected_lat = 45.542;  // 45° 32.5'
+            let expected_lon = -123.25;  // 123° 15.0' W
+
+            assert!((lop.chosen_lat - expected_lat).abs() < 0.01,
+                   "Chosen latitude should equal DR latitude {}, got {}", expected_lat, lop.chosen_lat);
+            assert!((lop.chosen_lon - expected_lon).abs() < 0.01,
+                   "Chosen longitude should equal DR longitude {}, got {}", expected_lon, lop.chosen_lon);
         }
     }
 
@@ -3159,7 +3165,7 @@ mod tests {
             chosen_lon: -123.62,
             ho: 35.42,           // Observed altitude after corrections
             gha: 245.62,         // Greenwich Hour Angle
-            lha: 122.0,          // Local Hour Angle (should be whole number)
+            lha: 122.0,          // Local Hour Angle (can have decimal values)
             gha_aries: None,
             lha_aries: None,
             hc: 35.408,          // Calculated altitude
@@ -3178,11 +3184,6 @@ mod tests {
         assert_eq!(lop.intercept, 0.7);
         assert_eq!(lop.azimuth, 125.0);
 
-        // Verify LHA is whole number
-        let lha_frac = lop.lha - lop.lha.round();
-        assert!(lha_frac.abs() < 0.001,
-                "LHA should be whole number after optimization, got {}", lop.lha);
-
         // Verify relationship: LHA = GHA + Lon (mod 360)
         let calculated_lha = (lop.gha + lop.chosen_lon + 360.0) % 360.0;
         assert!((calculated_lha - lop.lha).abs() < 0.1,
@@ -3196,12 +3197,12 @@ mod tests {
     }
 
     #[test]
-    fn test_lha_always_whole_number_in_display_data() {
-        // Test that LHA is always a whole number in LopDisplayData
-        // This is critical for sight reduction table lookups
+    fn test_lha_calculation_in_display_data() {
+        // Test that LHA is correctly calculated from GHA and Longitude
+        // For trig calculations, LHA can have decimal values (no optimization needed)
 
         let test_cases = vec![
-            (245.62, -123.25, 122.0),  // GHA, chosen_lon, expected LHA
+            (245.62, -123.25, 122.37),  // GHA, DR_lon, expected LHA (with decimals)
             (180.75, 45.25, 226.0),
             (358.75, -2.75, 356.0),
             (90.45, 69.55, 160.0),
@@ -3222,15 +3223,11 @@ mod tests {
                 azimuth: 180.0,
             };
 
-            // Verify LHA is whole number
-            let lha_frac = lop.lha - lop.lha.round();
-            assert!(lha_frac.abs() < 0.001,
-                    "LHA should be whole number, got {} (fraction: {})",
-                    lop.lha, lha_frac);
-
-            // Verify LHA matches expected value
-            assert!((lop.lha - expected_lha).abs() < 0.01,
-                    "LHA should be {}, got {}", expected_lha, lop.lha);
+            // Verify LHA can be calculated from GHA and Longitude
+            let calculated_lha = (gha + chosen_lon + 360.0) % 360.0;
+            assert!((calculated_lha - expected_lha).abs() < 0.01,
+                    "LHA should be {:.2} (from GHA {} + Lon {}), got {:.2}",
+                    expected_lha, gha, chosen_lon, calculated_lha);
         }
     }
 
