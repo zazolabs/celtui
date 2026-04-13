@@ -429,6 +429,30 @@ impl CalculationForm {
         self.celestial_body = bodies[prev_idx];
     }
 
+    /// Check if the current field is a text input field (for disabling screen shortcuts)
+    /// Returns true when user is typing in free-form text fields
+    pub fn is_text_input_active(&self) -> bool {
+        match self.current_field {
+            // Text input fields (free-form typing)
+            InputField::SextantAltitude
+            | InputField::Date
+            | InputField::Time
+            | InputField::Latitude
+            | InputField::Longitude
+            | InputField::StarName
+            | InputField::IndexError
+            | InputField::HeightOfEye
+            | InputField::GHA
+            | InputField::Declination => true,
+
+            // Selection fields (use +/- or specific keys, not free-form text)
+            InputField::CelestialBody
+            | InputField::LatitudeDirection
+            | InputField::LongitudeDirection
+            | InputField::DeclinationDirection => false,
+        }
+    }
+
     /// Handle keyboard events
     pub fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event.code {
@@ -1794,5 +1818,50 @@ mod tests {
         form.celestial_body = CelestialBody::Aries;
         form.next_celestial_body();
         assert_eq!(form.celestial_body, CelestialBody::Star);
+    }
+
+    // Text input active tests for Phase 2
+
+    #[test]
+    fn test_is_text_input_active_star_name() {
+        let mut form = CalculationForm::new();
+        form.celestial_body = CelestialBody::Star;
+        form.current_field = InputField::StarName;
+        assert!(form.is_text_input_active());
+    }
+
+    #[test]
+    fn test_is_text_input_active_date() {
+        let mut form = CalculationForm::new();
+        form.current_field = InputField::Date;
+        assert!(form.is_text_input_active());
+    }
+
+    #[test]
+    fn test_is_text_input_active_time() {
+        let mut form = CalculationForm::new();
+        form.current_field = InputField::Time;
+        assert!(form.is_text_input_active());
+    }
+
+    #[test]
+    fn test_is_text_input_active_latitude() {
+        let mut form = CalculationForm::new();
+        form.current_field = InputField::Latitude;
+        assert!(form.is_text_input_active());
+    }
+
+    #[test]
+    fn test_is_text_input_active_celestial_body() {
+        let mut form = CalculationForm::new();
+        form.current_field = InputField::CelestialBody;
+        assert!(!form.is_text_input_active()); // CelestialBody uses +/- cycling, not text input
+    }
+
+    #[test]
+    fn test_is_text_input_active_latitude_direction() {
+        let mut form = CalculationForm::new();
+        form.current_field = InputField::LatitudeDirection;
+        assert!(!form.is_text_input_active()); // Direction fields use N/S/E/W, not free-form text
     }
 }

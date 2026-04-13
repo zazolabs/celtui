@@ -405,6 +405,33 @@ impl AutoComputeForm {
         }
     }
 
+    /// Check if the current field/mode is a text input (for disabling screen shortcuts)
+    /// Returns true when user is typing in free-form text fields
+    pub fn is_text_input_active(&self) -> bool {
+        match self.mode {
+            AutoComputeMode::EnteringSight => {
+                match self.current_field {
+                    // Text input fields (free-form typing)
+                    SightInputField::StarName
+                    | SightInputField::Date
+                    | SightInputField::Time
+                    | SightInputField::SextantAltitude
+                    | SightInputField::IndexError
+                    | SightInputField::HeightOfEye
+                    | SightInputField::DRLatitude
+                    | SightInputField::DRLongitude => true,
+
+                    // Selection fields (use +/- or specific keys)
+                    SightInputField::Body
+                    | SightInputField::LatDirection
+                    | SightInputField::LonDirection => false,
+                }
+            }
+            AutoComputeMode::ViewingSights => false, // Just viewing, not editing
+            AutoComputeMode::EditingRunningFix => true, // Editing course/speed values
+        }
+    }
+
     /// Validate a specific field and return error message if invalid
     pub fn validate_field(&self, field: SightInputField) -> Option<String> {
         use crate::validation::*;
@@ -1713,6 +1740,46 @@ mod tests {
 
         // But it should be skipped in rendering if not a star body
         // (This is handled in render_input_form, not testable directly here)
+    }
+
+    // Text input active tests for Phase 2
+
+    #[test]
+    fn test_is_text_input_active_star_name() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::StarName;
+        assert!(form.is_text_input_active());
+    }
+
+    #[test]
+    fn test_is_text_input_active_date() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::Date;
+        assert!(form.is_text_input_active());
+    }
+
+    #[test]
+    fn test_is_text_input_active_body() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::Body;
+        assert!(!form.is_text_input_active()); // Body uses +/- cycling
+    }
+
+    #[test]
+    fn test_is_text_input_active_viewing_mode() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::ViewingSights;
+        assert!(!form.is_text_input_active()); // Not in entering mode
+    }
+
+    #[test]
+    fn test_is_text_input_active_running_fix_mode() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EditingRunningFix;
+        assert!(form.is_text_input_active()); // Editing running fix parameters
     }
 
     #[test]

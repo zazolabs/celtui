@@ -81,11 +81,17 @@ impl App {
 
         // If on calculation screen, let it handle most keys first
         if self.current_screen == Screen::Calculation {
+            // Check if we're in text input mode
+            let text_input_active = self.calculation_form.is_text_input_active();
+
             match key_event.code {
-                // Allow these keys to navigate away from calculation screen
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('h') | KeyCode::Char('H')
-                | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
-                | KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Char('?') => {
+                // Always allow these keys to navigate away from calculation screen
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('?') => {
+                    // Fall through to normal navigation
+                }
+                // Only allow screen navigation shortcuts if NOT in text input mode
+                KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
+                | KeyCode::Char('c') | KeyCode::Char('C') if !text_input_active => {
                     // Fall through to normal navigation
                 }
                 // All other keys are handled by the calculation form
@@ -98,11 +104,17 @@ impl App {
 
         // If on almanac screen, let it handle most keys first
         if self.current_screen == Screen::Almanac {
+            // Check if we're in text input mode
+            let text_input_active = self.almanac_form.is_text_input_active();
+
             match key_event.code {
-                // Allow these keys to navigate away from almanac screen
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('h') | KeyCode::Char('H')
-                | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
-                | KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Char('?') => {
+                // Always allow these keys to navigate away from almanac screen
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('?') => {
+                    // Fall through to normal navigation
+                }
+                // Only allow screen navigation shortcuts if NOT in text input mode
+                KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
+                | KeyCode::Char('c') | KeyCode::Char('C') if !text_input_active => {
                     // Fall through to normal navigation
                 }
                 // All other keys are handled by the almanac form
@@ -132,12 +144,17 @@ impl App {
 
         // If on auto compute screen, let it handle most keys first
         if self.current_screen == Screen::AutoCompute {
+            // Check if we're in text input mode
+            let text_input_active = self.auto_compute_form.is_text_input_active();
+
             match key_event.code {
-                // Allow these keys to navigate away from auto compute screen
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('h') | KeyCode::Char('H')
-                | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
-                | KeyCode::Char('?') => {
-                    // Don't allow 'c' here since it's used for "compute fix"
+                // Always allow these keys to navigate away from auto compute screen
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('?') => {
+                    // Fall through to normal navigation
+                }
+                // Only allow screen navigation shortcuts if NOT in text input mode
+                // Note: 'c' is not included here since it's used for "compute fix" in auto compute
+                KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S') if !text_input_active => {
                     // Fall through to normal navigation
                 }
                 // All other keys are handled by the auto compute form
@@ -362,8 +379,11 @@ mod tests {
         app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.current_screen, Screen::Almanac);
 
-        // Once in a form screen, tab navigates fields, not screens
-        // Use letter keys for screen navigation instead
+        // Once in a form screen with text input active, letter keys type into fields
+        // Use Esc to exit back to home, then navigate
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(app.current_screen, Screen::Home);
+
         app.handle_key_event(KeyEvent::from(KeyCode::Char('s')));
         assert_eq!(app.current_screen, Screen::SightReduction);
     }
@@ -374,6 +394,11 @@ mod tests {
 
         app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
         assert_eq!(app.current_screen, Screen::Almanac);
+
+        // When on Almanac screen, default field is Date (text input), so 's' won't navigate
+        // Either use Esc to return home first, or use a screen that's not in text mode
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(app.current_screen, Screen::Home);
 
         app.handle_key_event(KeyEvent::from(KeyCode::Char('s')));
         assert_eq!(app.current_screen, Screen::SightReduction);
@@ -392,5 +417,89 @@ mod tests {
         app.current_screen = Screen::Home;
         app.handle_key_event(KeyEvent::from(KeyCode::Char('2')));
         assert_eq!(app.current_screen, Screen::SightReduction);
+    }
+
+    // Phase 2: Text input mode tests
+
+    #[test]
+    fn test_screen_shortcuts_disabled_during_text_input_calculation() {
+        let mut app = App::new();
+        app.current_screen = Screen::Calculation;
+        app.calculation_form.current_field = crate::calculation_screen::InputField::StarName;
+        app.calculation_form.celestial_body = crate::calculation_screen::CelestialBody::Star;
+
+        // When typing in StarName, pressing 'a' should add 'a' to the field, not switch to Almanac screen
+        let initial_screen = app.current_screen;
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
+        assert_eq!(app.current_screen, initial_screen, "Should not switch screens when typing in text field");
+        // Note: The actual character input is handled by calculation_form.handle_key_event
+    }
+
+    #[test]
+    fn test_screen_shortcuts_work_when_not_in_text_input() {
+        let mut app = App::new();
+        app.current_screen = Screen::Calculation;
+        app.calculation_form.current_field = crate::calculation_screen::InputField::CelestialBody;
+
+        // When on CelestialBody field (not text input), 'a' should switch to Almanac
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
+        assert_eq!(app.current_screen, Screen::Almanac, "Should switch to Almanac when not in text input field");
+    }
+
+    #[test]
+    fn test_almanac_screen_shortcuts_disabled_during_text_input() {
+        let mut app = App::new();
+        app.current_screen = Screen::Almanac;
+        app.almanac_form.current_field = crate::almanac_screen::AlmanacInputField::StarName;
+
+        // When typing in StarName, pressing 'c' should add 'c' to the field
+        let initial_screen = app.current_screen;
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('c')));
+        assert_eq!(app.current_screen, initial_screen, "Should not switch screens when typing in text field");
+    }
+
+    #[test]
+    fn test_auto_compute_screen_shortcuts_disabled_during_text_input() {
+        let mut app = App::new();
+        app.current_screen = Screen::AutoCompute;
+        app.auto_compute_form.mode = crate::auto_compute_screen::AutoComputeMode::EnteringSight;
+        app.auto_compute_form.current_field = crate::auto_compute_screen::SightInputField::Date;
+
+        // When typing in Date field, pressing 'a' should add 'a' to the field
+        let initial_screen = app.current_screen;
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
+        assert_eq!(app.current_screen, initial_screen, "Should not switch screens when typing in text field");
+    }
+
+    #[test]
+    fn test_comprehensive_user_journey_typing_star_name() {
+        // This test simulates a user typing "Altair" in the star name field
+        // and verifies that the letters don't trigger screen shortcuts
+        let mut app = App::new();
+
+        // Navigate to Calculation screen
+        app.current_screen = Screen::Calculation;
+        app.calculation_form.current_field = crate::calculation_screen::InputField::StarName;
+        app.calculation_form.celestial_body = crate::calculation_screen::CelestialBody::Star;
+
+        // Type "Altair" - each letter should be handled by the form, not trigger shortcuts
+        let star_name = "Altair";
+        for ch in star_name.chars() {
+            let initial_screen = app.current_screen;
+            app.handle_key_event(KeyEvent::from(KeyCode::Char(ch)));
+            assert_eq!(
+                app.current_screen, initial_screen,
+                "Typing '{}' should not change screen from Calculation", ch
+            );
+        }
+
+        // Verify the star name was typed (note: actual character addition is in calculation_form)
+        // The important thing is we stayed on the Calculation screen
+        assert_eq!(app.current_screen, Screen::Calculation);
+
+        // Now if we switch to a non-text field, shortcuts should work again
+        app.calculation_form.current_field = crate::calculation_screen::InputField::CelestialBody;
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
+        assert_eq!(app.current_screen, Screen::Almanac, "Should switch to Almanac when not in text input");
     }
 }

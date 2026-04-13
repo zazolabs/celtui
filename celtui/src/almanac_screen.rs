@@ -123,7 +123,7 @@ impl AlmanacInputField {
             AlmanacInputField::Date => "Date (YYYY-MM-DD)",
             AlmanacInputField::Time => "Time UT (HH:MM:SS)",
             AlmanacInputField::CelestialBody => "Celestial Body",
-            AlmanacInputField::StarName => "Star Name (+/- to browse)",
+            AlmanacInputField::StarName => "Star Name (type to search, +/- to browse)",
         }
     }
 }
@@ -146,6 +146,8 @@ pub struct AlmanacForm {
     pub star_name: String,
     pub star_catalog: Vec<String>, // List of all star names for cycling
     pub star_index: usize,         // Current star index in catalog
+    pub star_filter_matches: Vec<String>, // Filtered star names for autocompletion
+    pub star_selected_index: usize,       // Index of selected star in filtered list
     pub current_field: AlmanacInputField,
     pub result: Option<AlmanacResult>,
     pub error_message: Option<String>,
@@ -171,6 +173,8 @@ impl AlmanacForm {
             star_name: default_star,
             star_catalog: star_names,
             star_index: 0,
+            star_filter_matches: Vec::new(),
+            star_selected_index: 0,
             current_field: AlmanacInputField::Date,
             result: None,
             error_message: None,
@@ -194,6 +198,64 @@ impl AlmanacForm {
                 self.star_index -= 1;
             }
             self.star_name = self.star_catalog[self.star_index].clone();
+        }
+    }
+
+    /// Filter star catalog based on current star_name input
+    /// Returns list of matching star names
+    pub fn filter_stars(&self) -> Vec<String> {
+        use celtnav::almanac::get_star_catalog;
+
+        let catalog = get_star_catalog();
+        let query = self.star_name.trim().to_lowercase();
+
+        if query.is_empty() {
+            // If empty, return all stars
+            catalog.iter().map(|s| s.name.to_string()).collect()
+        } else {
+            // Filter stars that start with the query
+            catalog
+                .iter()
+                .filter(|star| star.name.to_lowercase().starts_with(&query))
+                .map(|s| s.name.to_string())
+                .collect()
+        }
+    }
+
+    /// Update star filter matches based on current input
+    pub fn update_star_filter(&mut self) {
+        self.star_filter_matches = self.filter_stars();
+        // Reset selected index if it's out of bounds
+        if self.star_filter_matches.is_empty() {
+            self.star_selected_index = 0;
+        } else if self.star_selected_index >= self.star_filter_matches.len() {
+            self.star_selected_index = 0;
+        }
+    }
+
+    /// Move selection up in star list (previous star match)
+    pub fn previous_star_match(&mut self) {
+        if !self.star_filter_matches.is_empty() {
+            if self.star_selected_index == 0 {
+                self.star_selected_index = self.star_filter_matches.len() - 1;
+            } else {
+                self.star_selected_index -= 1;
+            }
+        }
+    }
+
+    /// Move selection down in star list (next star match)
+    pub fn next_star_match(&mut self) {
+        if !self.star_filter_matches.is_empty() {
+            self.star_selected_index = (self.star_selected_index + 1) % self.star_filter_matches.len();
+        }
+    }
+
+    /// Select the currently highlighted star from the filtered list
+    pub fn select_current_star(&mut self) {
+        if !self.star_filter_matches.is_empty() && self.star_selected_index < self.star_filter_matches.len() {
+            self.star_name = self.star_filter_matches[self.star_selected_index].clone();
+            self.update_star_filter();
         }
     }
 
@@ -227,6 +289,7 @@ impl AlmanacForm {
             }
             AlmanacInputField::StarName => {
                 self.star_name = value;
+                self.update_star_filter();
             }
         }
     }
@@ -272,6 +335,18 @@ impl AlmanacForm {
             let new_time = datetime - chrono::Duration::minutes(1);
             self.date = new_time.format("%Y-%m-%d").to_string();
             self.time = new_time.format("%H:%M:%S").to_string();
+        }
+    }
+
+    /// Check if the current field is a text input field (for disabling screen shortcuts)
+    /// Returns true when user is typing in free-form text fields
+    pub fn is_text_input_active(&self) -> bool {
+        match self.current_field {
+            // Text input fields (free-form typing)
+            AlmanacInputField::Date | AlmanacInputField::Time | AlmanacInputField::StarName => true,
+
+            // Selection fields (use +/- cycling)
+            AlmanacInputField::CelestialBody => false,
         }
     }
 
@@ -362,17 +437,30 @@ impl AlmanacForm {
         match key_event.code {
             KeyCode::Tab => self.next_field(),
             KeyCode::BackTab => self.previous_field(),
-            KeyCode::Enter => self.lookup(),
+            KeyCode::Enter => {
+                // If on StarName field, select current highlighted star
+                if self.current_field == AlmanacInputField::StarName {
+                    self.select_current_star();
+                } else {
+                    self.lookup();
+                }
+            }
             KeyCode::Up => {
                 if self.current_field == AlmanacInputField::Time {
                     self.increment_time();
                     self.lookup(); // Auto-lookup on browse
+                } else if self.current_field == AlmanacInputField::StarName {
+                    // In StarName field, navigate filtered star list up
+                    self.previous_star_match();
                 }
             }
             KeyCode::Down => {
                 if self.current_field == AlmanacInputField::Time {
                     self.decrement_time();
                     self.lookup(); // Auto-lookup on browse
+                } else if self.current_field == AlmanacInputField::StarName {
+                    // In StarName field, navigate filtered star list down
+                    self.next_star_match();
                 }
             }
             KeyCode::Char(c) => {
@@ -498,6 +586,34 @@ fn render_form_fields(frame: &mut Frame, area: Rect, form: &AlmanacForm) {
             Span::styled(format!("{}: ", field.label()), label_style),
             Span::styled(value, value_style),
         ]));
+
+        // Show autocompletion suggestions for StarName field
+        if field == AlmanacInputField::StarName && is_current && !form.star_filter_matches.is_empty() {
+            // Show up to 5 suggestions
+            let max_suggestions = 5;
+            let suggestions_to_show = form.star_filter_matches.len().min(max_suggestions);
+
+            for (i, star_name) in form.star_filter_matches.iter().take(suggestions_to_show).enumerate() {
+                let is_selected = i == form.star_selected_index;
+                let suggestion_style = if is_selected {
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                let prefix = if is_selected { "  → " } else { "    " };
+                lines.push(Line::from(vec![
+                    Span::styled(prefix, suggestion_style),
+                    Span::styled(star_name.clone(), suggestion_style),
+                ]));
+            }
+
+            if form.star_filter_matches.len() > max_suggestions {
+                lines.push(Line::from(Span::styled(
+                    format!("    ... {} more", form.star_filter_matches.len() - max_suggestions),
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                )));
+            }
+        }
     }
 
     let paragraph = Paragraph::new(lines)
@@ -831,5 +947,165 @@ mod tests {
     fn test_star_field_in_all_fields() {
         let fields = AlmanacInputField::all();
         assert!(fields.contains(&AlmanacInputField::StarName));
+    }
+
+    // Star autocomplete tests (following TDD)
+
+    #[test]
+    fn test_filter_stars_empty_input() {
+        let mut form = AlmanacForm::new();
+        form.star_name = String::new();
+        let matches = form.filter_stars();
+        // Should return all 57 stars when input is empty
+        assert_eq!(matches.len(), 57);
+    }
+
+    #[test]
+    fn test_filter_stars_starts_with() {
+        let mut form = AlmanacForm::new();
+        form.star_name = String::from("sir");
+        let matches = form.filter_stars();
+        // Should match "Sirius"
+        assert!(matches.contains(&"Sirius".to_string()));
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_filter_stars_case_insensitive() {
+        let mut form = AlmanacForm::new();
+        form.star_name = String::from("SIR");
+        let matches = form.filter_stars();
+        assert!(matches.contains(&"Sirius".to_string()));
+
+        form.star_name = String::from("sirius");
+        let matches = form.filter_stars();
+        assert!(matches.contains(&"Sirius".to_string()));
+    }
+
+    #[test]
+    fn test_filter_stars_multiple_matches() {
+        let mut form = AlmanacForm::new();
+        form.star_name = String::from("a");
+        let matches = form.filter_stars();
+        // Should match: Arcturus, Achernar, Acrux, Aldebaran, Altair, Antares, etc.
+        assert!(matches.len() > 5);
+        assert!(matches.contains(&"Arcturus".to_string()));
+        assert!(matches.contains(&"Altair".to_string()));
+    }
+
+    #[test]
+    fn test_filter_stars_no_matches() {
+        let mut form = AlmanacForm::new();
+        form.star_name = String::from("xyz");
+        let matches = form.filter_stars();
+        assert_eq!(matches.len(), 0);
+    }
+
+    #[test]
+    fn test_update_star_filter() {
+        let mut form = AlmanacForm::new();
+        form.star_name = String::from("sir");
+        form.update_star_filter();
+        assert_eq!(form.star_filter_matches.len(), 1);
+        assert_eq!(form.star_filter_matches[0], "Sirius");
+        assert_eq!(form.star_selected_index, 0);
+    }
+
+    #[test]
+    fn test_next_star_match() {
+        let mut form = AlmanacForm::new();
+        form.star_name = String::from("a");
+        form.update_star_filter();
+
+        let initial_len = form.star_filter_matches.len();
+        assert!(initial_len > 1);
+
+        // Test cycling through matches
+        form.star_selected_index = 0;
+        form.next_star_match();
+        assert_eq!(form.star_selected_index, 1);
+
+        // Test wrapping at end
+        form.star_selected_index = initial_len - 1;
+        form.next_star_match();
+        assert_eq!(form.star_selected_index, 0);
+    }
+
+    #[test]
+    fn test_previous_star_match() {
+        let mut form = AlmanacForm::new();
+        form.star_name = String::from("a");
+        form.update_star_filter();
+
+        let initial_len = form.star_filter_matches.len();
+        assert!(initial_len > 1);
+
+        // Test cycling backward
+        form.star_selected_index = 1;
+        form.previous_star_match();
+        assert_eq!(form.star_selected_index, 0);
+
+        // Test wrapping at beginning
+        form.star_selected_index = 0;
+        form.previous_star_match();
+        assert_eq!(form.star_selected_index, initial_len - 1);
+    }
+
+    #[test]
+    fn test_select_current_star_match() {
+        let mut form = AlmanacForm::new();
+        form.star_name = String::from("a");
+        form.update_star_filter();
+
+        // Select first match
+        form.star_selected_index = 0;
+        let first_star = form.star_filter_matches[0].clone();
+        form.select_current_star();
+        assert_eq!(form.star_name, first_star);
+
+        // After selection, filter should update to exact match
+        assert_eq!(form.star_filter_matches.len(), 1);
+        assert_eq!(form.star_filter_matches[0], first_star);
+    }
+
+    #[test]
+    fn test_set_field_value_updates_star_filter() {
+        let mut form = AlmanacForm::new();
+        form.set_field_value(AlmanacInputField::StarName, "sir".to_string());
+
+        // Filter should be automatically updated
+        assert_eq!(form.star_name, "sir");
+        assert_eq!(form.star_filter_matches.len(), 1);
+        assert_eq!(form.star_filter_matches[0], "Sirius");
+    }
+
+    // Text input active tests for Phase 2
+
+    #[test]
+    fn test_is_text_input_active_star_name() {
+        let mut form = AlmanacForm::new();
+        form.current_field = AlmanacInputField::StarName;
+        assert!(form.is_text_input_active());
+    }
+
+    #[test]
+    fn test_is_text_input_active_date() {
+        let mut form = AlmanacForm::new();
+        form.current_field = AlmanacInputField::Date;
+        assert!(form.is_text_input_active());
+    }
+
+    #[test]
+    fn test_is_text_input_active_time() {
+        let mut form = AlmanacForm::new();
+        form.current_field = AlmanacInputField::Time;
+        assert!(form.is_text_input_active());
+    }
+
+    #[test]
+    fn test_is_text_input_active_celestial_body() {
+        let mut form = AlmanacForm::new();
+        form.current_field = AlmanacInputField::CelestialBody;
+        assert!(!form.is_text_input_active()); // CelestialBody uses +/- cycling
     }
 }
