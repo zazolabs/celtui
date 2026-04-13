@@ -1,5 +1,5 @@
 //! Test based on user's correct manual calculation
-//! Pollux, 10 Sept 2016, 00:28:12 UTC
+//! Pollux, 10 Sept 2016, 06:28:12 UTC
 //!
 //! User's manual calculation (CORRECT):
 //! - GHA Pollux = 86° 03.3' = 86.055°
@@ -14,7 +14,7 @@ use celtnav::sight_reduction::optimize_chosen_position;
 
 #[test]
 fn test_pollux_user_example_optimization() {
-    // Pollux, 10 Sept 2016, 00:28:12 UTC
+    // Pollux, 10 Sept 2016, 06:28:12 UTC
     // GHA Pollux = 86° 03.3' = 86.055°
     // DR Lon ≈ 20° W = -20°
     // Expected chosen lon = 20° 03.9' W = -20.065°
