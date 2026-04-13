@@ -859,10 +859,14 @@ impl AutoComputeForm {
         // For stars, calculate Pub 249 Vol 1 data (optimized position and whole LHA Aries)
         // This allows user to verify against table lookups
         let (gha_aries, pub249_chosen_lat, pub249_chosen_lon, lha_aries) =
-            if let SightCelestialBody::Star(_star_name) = &sight.body {
-                use celtnav::almanac::gha_aries as calc_gha_aries;
+            if let SightCelestialBody::Star(star_name) = &sight.body {
+                use celtnav::almanac::find_star;
 
-                let gha_aries_val = calc_gha_aries(datetime);
+                // For stars: GHA star = GHA Aries + SHA star
+                // So: GHA Aries = GHA star - SHA star
+                // This ensures consistency with the GHA star value we're using
+                let star = find_star(star_name).ok_or_else(|| format!("Star '{}' not found", star_name))?;
+                let gha_aries_val = (position.gha - star.sha + 360.0) % 360.0;
 
                 // Optimize chosen position to make LHA Aries a whole number (for Pub 249 tables)
                 let (opt_lat, opt_lon) = optimize_chosen_position(dr_latitude, dr_longitude, gha_aries_val);
