@@ -1677,8 +1677,8 @@ mod tests {
         let mut form = CalculationForm::new();
         form.star_name = String::new();
         let matches = form.filter_stars();
-        // Should return all 57 stars when input is empty
-        assert_eq!(matches.len(), 57);
+        // Should return all 58 stars when input is empty
+        assert_eq!(matches.len(), 58);
     }
 
     #[test]

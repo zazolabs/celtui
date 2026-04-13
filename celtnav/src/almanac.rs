@@ -495,7 +495,7 @@ pub struct Star {
 
 /// Get the catalog of navigational stars
 ///
-/// Returns the 57 primary navigational stars used in celestial navigation.
+/// Returns the 58 primary navigational stars used in celestial navigation.
 /// SHA and Declination values are for epoch 2024.
 pub fn get_star_catalog() -> Vec<Star> {
     vec![
@@ -559,6 +559,7 @@ pub fn get_star_catalog() -> Vec<Star> {
         Star { name: "Gienah", sha: 176.0, declination: -17.5 },
         Star { name: "Gacrux", sha: 172.2, declination: -57.1 },
         Star { name: "Alnair", sha: 28.1, declination: -46.9 },
+        Star { name: "Hamal", sha: 328.1, declination: 23.5 },
     ]
 }
 
@@ -1053,8 +1054,8 @@ mod tests {
         let catalog = get_star_catalog();
         assert_eq!(
             catalog.len(),
-            57,
-            "Star catalog should contain 57 navigational stars"
+            58,
+            "Star catalog should contain 58 navigational stars"
         );
     }
 
