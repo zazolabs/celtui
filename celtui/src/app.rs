@@ -85,12 +85,13 @@ impl App {
             let text_input_active = self.calculation_form.is_text_input_active();
 
             match key_event.code {
-                // Always allow these keys to navigate away from calculation screen
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('?') => {
+                // Always allow emergency exits (q/Q and Esc) to navigate away
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
                     // Fall through to normal navigation
                 }
                 // Only allow screen navigation shortcuts if NOT in text input mode
-                KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
+                KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('?')
+                | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
                 | KeyCode::Char('c') | KeyCode::Char('C') if !text_input_active => {
                     // Fall through to normal navigation
                 }
@@ -108,12 +109,13 @@ impl App {
             let text_input_active = self.almanac_form.is_text_input_active();
 
             match key_event.code {
-                // Always allow these keys to navigate away from almanac screen
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('?') => {
+                // Always allow emergency exits (q/Q and Esc) to navigate away
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
                     // Fall through to normal navigation
                 }
                 // Only allow screen navigation shortcuts if NOT in text input mode
-                KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
+                KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('?')
+                | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
                 | KeyCode::Char('c') | KeyCode::Char('C') if !text_input_active => {
                     // Fall through to normal navigation
                 }
@@ -128,8 +130,12 @@ impl App {
         // If on sight reduction screen, let it handle most keys first
         if self.current_screen == Screen::SightReduction {
             match key_event.code {
-                // Allow these keys to navigate away from sight reduction screen
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('h') | KeyCode::Char('H')
+                // Always allow emergency exits (q/Q and Esc) to navigate away
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    // Fall through to normal navigation
+                }
+                // Allow other navigation shortcuts (sight reduction has no text input)
+                KeyCode::Char('h') | KeyCode::Char('H')
                 | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
                 | KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Char('?') => {
                     // Fall through to normal navigation
@@ -148,13 +154,14 @@ impl App {
             let text_input_active = self.auto_compute_form.is_text_input_active();
 
             match key_event.code {
-                // Always allow these keys to navigate away from auto compute screen
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('?') => {
+                // Always allow emergency exits (q/Q and Esc) to navigate away
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
                     // Fall through to normal navigation
                 }
                 // Only allow screen navigation shortcuts if NOT in text input mode
                 // Note: 'c' is not included here since it's used for "compute fix" in auto compute
-                KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S') if !text_input_active => {
+                KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('?')
+                | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S') if !text_input_active => {
                     // Fall through to normal navigation
                 }
                 // All other keys are handled by the auto compute form
@@ -168,8 +175,12 @@ impl App {
         // If on averaging screen, let it handle most keys first
         if self.current_screen == Screen::Averaging {
             match key_event.code {
-                // Allow these keys to navigate away from averaging screen
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('h') | KeyCode::Char('H')
+                // Always allow emergency exits (q/Q and Esc) to navigate away
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    // Fall through to normal navigation
+                }
+                // Allow other navigation shortcuts (averaging has no text input)
+                KeyCode::Char('h') | KeyCode::Char('H')
                 | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
                 | KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Char('?') | KeyCode::Char('v') | KeyCode::Char('V') => {
                     // Fall through to normal navigation
@@ -185,8 +196,12 @@ impl App {
         // If on arc to time screen, let it handle most keys first
         if self.current_screen == Screen::ArcToTime {
             match key_event.code {
-                // Allow these keys to navigate away from arc to time screen
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('h') | KeyCode::Char('H')
+                // Always allow emergency exits (q/Q and Esc) to navigate away
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    // Fall through to normal navigation
+                }
+                // Allow other navigation shortcuts (arc to time has no text input)
+                KeyCode::Char('h') | KeyCode::Char('H')
                 | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('s') | KeyCode::Char('S')
                 | KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Char('?') | KeyCode::Char('v') | KeyCode::Char('V') => {
                     // Fall through to normal navigation
@@ -501,5 +516,73 @@ mod tests {
         app.calculation_form.current_field = crate::calculation_screen::InputField::CelestialBody;
         app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
         assert_eq!(app.current_screen, Screen::Almanac, "Should switch to Almanac when not in text input");
+    }
+
+    // TDD tests for Issue 2: "H" key should type in text fields, not trigger Home screen
+
+    #[test]
+    fn test_h_key_types_in_star_name_field() {
+        let mut app = App::new();
+        app.current_screen = Screen::Calculation;
+        app.calculation_form.current_field = crate::calculation_screen::InputField::StarName;
+        app.calculation_form.celestial_body = crate::calculation_screen::CelestialBody::Star;
+
+        // Typing "H" should stay on Calculation screen (not go to Home)
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('H')));
+        assert_eq!(app.current_screen, Screen::Calculation,
+            "Pressing 'H' in text field should not navigate to Home screen");
+
+        // Lowercase 'h' should also stay on Calculation screen
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('h')));
+        assert_eq!(app.current_screen, Screen::Calculation,
+            "Pressing 'h' in text field should not navigate to Home screen");
+    }
+
+    #[test]
+    fn test_h_key_types_when_entering_hadar_star_name() {
+        let mut app = App::new();
+        app.current_screen = Screen::Calculation;
+        app.calculation_form.current_field = crate::calculation_screen::InputField::StarName;
+        app.calculation_form.celestial_body = crate::calculation_screen::CelestialBody::Star;
+
+        // Simulate typing "Hadar" - the 'H' should not trigger Home screen
+        for ch in "Hadar".chars() {
+            app.handle_key_event(KeyEvent::from(KeyCode::Char(ch)));
+            assert_eq!(app.current_screen, Screen::Calculation,
+                "Typing '{}' should not navigate away from Calculation screen", ch);
+        }
+    }
+
+    #[test]
+    fn test_help_key_still_works_when_not_in_text_input() {
+        let mut app = App::new();
+        app.current_screen = Screen::Calculation;
+        app.calculation_form.current_field = crate::calculation_screen::InputField::CelestialBody;
+
+        // When NOT in text input, '?' should still open help
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('?')));
+        assert_eq!(app.current_screen, Screen::Help,
+            "? key should open Help screen when not in text input mode");
+    }
+
+    #[test]
+    fn test_q_and_esc_always_work_even_in_text_input() {
+        let mut app = App::new();
+        app.current_screen = Screen::Calculation;
+        app.calculation_form.current_field = crate::calculation_screen::InputField::StarName;
+
+        // 'q' should still return to Home (emergency exit)
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('q')));
+        assert_eq!(app.current_screen, Screen::Home,
+            "'q' should always work as emergency exit even in text input");
+
+        // Navigate back to Calculation
+        app.current_screen = Screen::Calculation;
+        app.calculation_form.current_field = crate::calculation_screen::InputField::StarName;
+
+        // Esc should still return to Home
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(app.current_screen, Screen::Home,
+            "Esc should always work as emergency exit even in text input");
     }
 }

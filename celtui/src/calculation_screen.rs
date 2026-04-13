@@ -98,9 +98,9 @@ pub enum InputField {
     Date,
     Time,
     Latitude,          // Single field: "DD MM.M"
-    LatitudeDirection, // N/S
+    LatitudeDirection, // N/S - immediately follows Latitude
     Longitude,         // Single field: "DD MM.M"
-    LongitudeDirection, // E/W
+    LongitudeDirection, // E/W - immediately follows Longitude
     CelestialBody,
     StarName,          // Star name input (when CelestialBody::Star is selected)
     IndexError,
@@ -108,7 +108,7 @@ pub enum InputField {
     // Manual mode only fields
     GHA,               // Single field: "DD MM.M"
     Declination,       // Single field: "DD MM.M"
-    DeclinationDirection, // N/S
+    DeclinationDirection, // N/S - immediately follows Declination
 }
 
 impl InputField {
@@ -132,11 +132,22 @@ impl InputField {
 
     /// Returns all fields for manual mode
     pub fn manual_fields() -> Vec<InputField> {
-        let mut fields = Self::automatic_fields();
-        fields.push(InputField::GHA);
-        fields.push(InputField::Declination);
-        fields.push(InputField::DeclinationDirection);
-        fields
+        vec![
+            InputField::SextantAltitude,
+            InputField::Date,
+            InputField::Time,
+            InputField::Latitude,
+            InputField::LatitudeDirection,
+            InputField::Longitude,
+            InputField::LongitudeDirection,
+            InputField::CelestialBody,
+            InputField::StarName,
+            InputField::IndexError,
+            InputField::HeightOfEye,
+            InputField::GHA,
+            InputField::Declination,
+            InputField::DeclinationDirection,  // N/S immediately follows Declination
+        ]
     }
 
     /// Get next field in the sequence
@@ -1928,5 +1939,52 @@ mod tests {
         let mut form = CalculationForm::new();
         form.current_field = InputField::LatitudeDirection;
         assert!(!form.is_text_input_active()); // Direction fields use N/S/E/W, not free-form text
+    }
+
+    // TDD tests for field order - directions should follow their values
+
+    #[test]
+    fn test_field_order_latitude_direction_follows_latitude() {
+        let mut form = CalculationForm::new();
+        form.current_field = InputField::Latitude;
+
+        // Navigating forward from Latitude should go to LatitudeDirection
+        form.next_field();
+        assert_eq!(form.current_field, InputField::LatitudeDirection,
+            "LatitudeDirection should immediately follow Latitude");
+    }
+
+    #[test]
+    fn test_field_order_longitude_direction_follows_longitude() {
+        let mut form = CalculationForm::new();
+        form.current_field = InputField::Longitude;
+
+        // Navigating forward from Longitude should go to LongitudeDirection
+        form.next_field();
+        assert_eq!(form.current_field, InputField::LongitudeDirection,
+            "LongitudeDirection should immediately follow Longitude");
+    }
+
+    #[test]
+    fn test_field_order_declination_direction_follows_declination() {
+        let mut form = CalculationForm::new();
+        form.mode = CalculationMode::Manual;
+        form.current_field = InputField::Declination;
+
+        // Navigating forward from Declination should go to DeclinationDirection
+        form.next_field();
+        assert_eq!(form.current_field, InputField::DeclinationDirection,
+            "DeclinationDirection should immediately follow Declination");
+    }
+
+    #[test]
+    fn test_field_order_backwards_direction_precedes_value() {
+        let mut form = CalculationForm::new();
+        form.current_field = InputField::LatitudeDirection;
+
+        // Navigating backward from LatitudeDirection should go to Latitude
+        form.previous_field();
+        assert_eq!(form.current_field, InputField::Latitude,
+            "Latitude should immediately precede LatitudeDirection");
     }
 }

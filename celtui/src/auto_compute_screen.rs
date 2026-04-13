@@ -135,9 +135,9 @@ pub enum SightInputField {
     IndexError,
     HeightOfEye,
     DRLatitude,
+    LatDirection,      // N/S direction immediately follows DRLatitude
     DRLongitude,
-    LatDirection,
-    LonDirection,
+    LonDirection,      // E/W direction immediately follows DRLongitude
 }
 
 impl SightInputField {
@@ -151,9 +151,9 @@ impl SightInputField {
             SightInputField::IndexError,
             SightInputField::HeightOfEye,
             SightInputField::DRLatitude,
+            SightInputField::LatDirection,  // N/S immediately follows DRLatitude
             SightInputField::DRLongitude,
-            SightInputField::LatDirection,
-            SightInputField::LonDirection,
+            SightInputField::LonDirection,  // E/W immediately follows DRLongitude
         ]
     }
 
@@ -2030,6 +2030,44 @@ mod tests {
 
         // Should cycle back to W
         assert_eq!(form.current_sight.lon_direction, 'W');
+    }
+
+    // TDD tests for field order - directions should follow their values
+
+    #[test]
+    fn test_field_order_latitude_direction_follows_latitude() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::DRLatitude;
+
+        // Navigating forward from DRLatitude should go to LatDirection
+        form.next_field();
+        assert_eq!(form.current_field, SightInputField::LatDirection,
+            "LatDirection should immediately follow DRLatitude");
+    }
+
+    #[test]
+    fn test_field_order_longitude_direction_follows_longitude() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::DRLongitude;
+
+        // Navigating forward from DRLongitude should go to LonDirection
+        form.next_field();
+        assert_eq!(form.current_field, SightInputField::LonDirection,
+            "LonDirection should immediately follow DRLongitude");
+    }
+
+    #[test]
+    fn test_field_order_backwards_direction_precedes_value() {
+        let mut form = AutoComputeForm::new();
+        form.mode = AutoComputeMode::EnteringSight;
+        form.current_field = SightInputField::LatDirection;
+
+        // Navigating backward from LatDirection should go to DRLatitude
+        form.previous_field();
+        assert_eq!(form.current_field, SightInputField::DRLatitude,
+            "DRLatitude should immediately precede LatDirection");
     }
 }
 
