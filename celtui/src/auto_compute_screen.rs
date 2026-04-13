@@ -117,8 +117,14 @@ pub struct LopDisplayData {
     /// GHA Aries in degrees (only for stars, None for other bodies)
     /// For Pub 249 Vol 1 table lookup comparison
     pub gha_aries: Option<f64>,
-    /// LHA Aries in degrees (only for stars, None for other bodies)
-    /// For Pub 249 Vol 1 table lookup: round to nearest whole degree and enter tables with star name
+    /// Optimized chosen latitude for Pub 249 tables (only for stars, None for other bodies)
+    /// Latitude rounded to nearest whole degree for easier plotting
+    pub pub249_chosen_lat: Option<f64>,
+    /// Optimized chosen longitude for Pub 249 tables (only for stars, None for other bodies)
+    /// Longitude adjusted to make LHA Aries a whole number for table lookup
+    pub pub249_chosen_lon: Option<f64>,
+    /// LHA Aries as whole number (only for stars, None for other bodies)
+    /// For Pub 249 Vol 1 table lookup: enter tables with this whole LHA Aries and star name
     pub lha_aries: Option<f64>,
     /// Calculated altitude (Hc) in degrees using spherical trigonometry
     pub hc: f64,
@@ -850,20 +856,29 @@ impl AutoComputeForm {
             dr_longitude,
         };
 
-        // For stars, also calculate GHA Aries and LHA Aries for Pub 249 Vol 1 comparison
-        // These values allow user to verify against table lookups
-        let (gha_aries, lha_aries) = if let SightCelestialBody::Star(_star_name) = &sight.body {
-            use celtnav::almanac::gha_aries as calc_gha_aries;
+        // For stars, calculate Pub 249 Vol 1 data (optimized position and whole LHA Aries)
+        // This allows user to verify against table lookups
+        let (gha_aries, pub249_chosen_lat, pub249_chosen_lon, lha_aries) =
+            if let SightCelestialBody::Star(_star_name) = &sight.body {
+                use celtnav::almanac::gha_aries as calc_gha_aries;
 
-            let gha_aries_val = calc_gha_aries(datetime);
-            let lha_aries_val = (gha_aries_val + dr_longitude + 360.0) % 360.0;
+                let gha_aries_val = calc_gha_aries(datetime);
 
-            (Some(gha_aries_val), Some(lha_aries_val))
-        } else {
-            (None, None)
-        };
+                // Optimize chosen position to make LHA Aries a whole number (for Pub 249 tables)
+                let (opt_lat, opt_lon) = optimize_chosen_position(dr_latitude, dr_longitude, gha_aries_val);
 
-        // Display data shows the chosen (optimized) position and all key values
+                // Calculate LHA Aries with optimized position
+                let lha_aries_exact = (gha_aries_val + opt_lon + 360.0) % 360.0;
+
+                // Round to nearest whole degree for table lookup
+                let lha_aries_whole = lha_aries_exact.round();
+
+                (Some(gha_aries_val), Some(opt_lat), Some(opt_lon), Some(lha_aries_whole))
+            } else {
+                (None, None, None, None)
+            };
+
+        // Display data shows DR position for trig calc, plus Pub 249 data for stars
         let display_data = LopDisplayData {
             body_name: sight.body.name(),
             chosen_lat,
@@ -872,6 +887,8 @@ impl AutoComputeForm {
             gha: position.gha,
             lha,
             gha_aries,
+            pub249_chosen_lat,
+            pub249_chosen_lon,
             lha_aries,
             hc,
             intercept,
@@ -1679,11 +1696,31 @@ fn render_lop_column(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData],
             ),
         ]));
 
-        // For stars, show GHA Aries and LHA Aries for Pub 249 Vol 1 comparison
-        if let (Some(gha_aries), Some(lha_aries)) = (lop.gha_aries, lop.lha_aries) {
+        // For stars, show Pub 249 Vol 1 data (optimized position and whole LHA Aries)
+        if let (Some(gha_aries), Some(pub249_lat), Some(pub249_lon), Some(lha_aries)) =
+            (lop.gha_aries, lop.pub249_chosen_lat, lop.pub249_chosen_lon, lop.lha_aries)
+        {
             let gha_aries_dms = celtnav::decimal_to_dms(gha_aries.abs());
-            let lha_aries_dms = celtnav::decimal_to_dms(lha_aries.abs());
 
+            // Pub 249 optimized chosen position
+            let pub249_lat_sign = if pub249_lat >= 0.0 { "N" } else { "S" };
+            let pub249_lat_dms = celtnav::decimal_to_dms(pub249_lat.abs());
+
+            let pub249_lon_sign = if pub249_lon >= 0.0 { "E" } else { "W" };
+            let pub249_lon_dms = celtnav::decimal_to_dms(pub249_lon.abs());
+
+            // Line 1: Pub 249 optimized chosen position
+            lop_lines.push(Line::from(vec![
+                Span::styled("  Pub 249: ", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{} {:02}° {:05.2}', {} {:03}° {:05.2}'",
+                        pub249_lat_sign, pub249_lat_dms.degrees, pub249_lat_dms.minutes,
+                        pub249_lon_sign, pub249_lon_dms.degrees, pub249_lon_dms.minutes),
+                    Style::default().fg(Color::White)
+                ),
+            ]));
+
+            // Line 2: GHA Aries and LHA Aries (whole number for table lookup)
             lop_lines.push(Line::from(vec![
                 Span::styled("  GHA♈: ", Style::default().fg(Color::Yellow)),
                 Span::styled(
@@ -1692,10 +1729,10 @@ fn render_lop_column(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData],
                 ),
                 Span::styled("  LHA♈: ", Style::default().fg(Color::Yellow)),
                 Span::styled(
-                    format!("{:03}° {:04.1}'", lha_aries_dms.degrees, lha_aries_dms.minutes),
+                    format!("{:03}°", lha_aries as i32),  // Whole number for table lookup
                     Style::default().fg(Color::White)
                 ),
-                Span::styled(" (Pub 249)", Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+                Span::styled(" (table)", Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
             ]));
         }
 
@@ -2838,7 +2875,9 @@ mod tests {
             gha: 245.62,
             lha: 122.0,
             gha_aries: Some(10.0),
-            lha_aries: Some(246.75),
+            pub249_chosen_lat: Some(46.0),
+            pub249_chosen_lon: Some(-123.35),
+            lha_aries: Some(247.0),  // Whole number for table
             hc: 35.408,
             intercept: 2.3,
             azimuth: 125.0,
@@ -2865,6 +2904,8 @@ mod tests {
             gha: 180.5,
             lha: 106.0,
             gha_aries: None,
+            pub249_chosen_lat: None,
+            pub249_chosen_lon: None,
             lha_aries: None,
             hc: 42.0,
             intercept: 2.5,
@@ -2885,6 +2926,8 @@ mod tests {
             gha: 215.33,
             lha: 141.0,
             gha_aries: None,
+            pub249_chosen_lat: None,
+            pub249_chosen_lon: None,
             lha_aries: None,
             hc: 28.0,
             intercept: -1.7,
@@ -2905,6 +2948,8 @@ mod tests {
             gha: 95.25,
             lha: 21.0,
             gha_aries: None,
+            pub249_chosen_lat: None,
+            pub249_chosen_lon: None,
             lha_aries: None,
             hc: 30.0,
             intercept: 0.0,
@@ -2934,6 +2979,8 @@ mod tests {
             gha: 180.5,
             lha: 106.0,
             gha_aries: None,
+            pub249_chosen_lat: None,
+            pub249_chosen_lon: None,
             lha_aries: None,
             hc: 42.0,
             intercept: 2.0,
@@ -3021,6 +3068,8 @@ mod tests {
             gha: 180.25,
             lha: 175.0,
             gha_aries: None,
+            pub249_chosen_lat: None,
+            pub249_chosen_lon: None,
             lha_aries: None,
             hc: 45.5,
             intercept: 3.2,
@@ -3049,6 +3098,8 @@ mod tests {
             gha: 180.0,
             lha: 57.0,
             gha_aries: None,
+            pub249_chosen_lat: None,
+            pub249_chosen_lon: None,
             lha_aries: None,
             hc: 35.0,
             intercept: 2.0,
@@ -3076,6 +3127,8 @@ mod tests {
             gha: 180.0,
             lha: 57.0,
             gha_aries: None,
+            pub249_chosen_lat: None,
+            pub249_chosen_lon: None,
             lha_aries: None,
             hc: 35.0,
             intercept: 2.0,
@@ -3103,6 +3156,8 @@ mod tests {
             gha: 180.0,
             lha: 57.0,
             gha_aries: None,
+            pub249_chosen_lat: None,
+            pub249_chosen_lon: None,
             lha_aries: None,
             hc: 35.0,
             intercept: 2.0,
@@ -3167,6 +3222,8 @@ mod tests {
             gha: 245.62,         // Greenwich Hour Angle
             lha: 122.0,          // Local Hour Angle (can have decimal values)
             gha_aries: None,
+            pub249_chosen_lat: None,
+            pub249_chosen_lon: None,
             lha_aries: None,
             hc: 35.408,          // Calculated altitude
             intercept: 0.7,
@@ -3217,6 +3274,8 @@ mod tests {
                 gha,
                 lha: expected_lha,
                 gha_aries: None,
+            pub249_chosen_lat: None,
+            pub249_chosen_lon: None,
                 lha_aries: None,
                 hc: 35.0,
                 intercept: 0.0,
