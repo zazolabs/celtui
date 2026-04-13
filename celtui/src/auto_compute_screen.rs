@@ -16,7 +16,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Row, Table, Wrap},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame,
 };
 use serde::{Deserialize, Serialize};
@@ -531,12 +531,26 @@ impl AutoComputeForm {
 
         self.sights.push(self.current_sight.clone());
         self.current_sight = Sight::new();
-        // Copy DR position from previous sight
+        // Preserve common fields from previous sight
         if let Some(last) = self.sights.last() {
+            // Preserve date and time (sights usually taken at similar times)
+            self.current_sight.date = last.date.clone();
+            self.current_sight.time = last.time.clone();
+
+            // Preserve DR position
             self.current_sight.dr_latitude = last.dr_latitude.clone();
             self.current_sight.dr_longitude = last.dr_longitude.clone();
             self.current_sight.lat_direction = last.lat_direction;
             self.current_sight.lon_direction = last.lon_direction;
+
+            // Preserve index error (constant for a given sextant)
+            self.current_sight.index_error = last.index_error.clone();
+
+            // Preserve height of eye (constant for a given observer position)
+            self.current_sight.height_of_eye = last.height_of_eye.clone();
+
+            // Note: sextant_altitude and body are NOT preserved - they are reset
+            // to default values for the next sight (via Sight::new())
         }
         self.error_message = Some("Sight added! Enter another or press 'C' to compute fix.".to_string());
     }
@@ -1283,7 +1297,106 @@ fn render_sights_list(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
 }
 
 fn render_fix_results(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
-    if let Some(error) = &form.error_message {
+    // If we have both a fix and a message, split the area to show both
+    if let Some(fix) = &form.fix_result {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),      // Fix display (main area)
+                Constraint::Length(if form.error_message.is_some() { 4 } else { 0 }),   // Status message
+            ])
+            .split(area);
+
+        // Render prominent fix display
+        let lat_sign = if fix.position.latitude >= 0.0 { "N" } else { "S" };
+        let lat_dms = celtnav::decimal_to_dms(fix.position.latitude.abs());
+
+        let lon_sign = if fix.position.longitude >= 0.0 { "E" } else { "W" };
+        let lon_dms = celtnav::decimal_to_dms(fix.position.longitude.abs());
+
+        // Create a prominent header with the fix position
+        let fix_summary = format!(
+            "Fix Position: {} {:02}° {:05.2}' {} / {} {:03}° {:05.2}' {}",
+            lat_sign, lat_dms.degrees, lat_dms.minutes, lat_sign,
+            lon_sign, lon_dms.degrees, lon_dms.minutes, lon_sign
+        );
+
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("═══ FIX COMPUTED ═══",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Position:  ", Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("{} {:02}° {:05.2}' {}", lat_sign, lat_dms.degrees, lat_dms.minutes, lat_sign),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("           ", Style::default()),
+                Span::styled(
+                    format!("{} {:03}° {:05.2}' {}", lon_sign, lon_dms.degrees, lon_dms.minutes, lon_sign),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Sights Used: ", Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("{}", fix.num_lops),
+                    Style::default().fg(Color::White),
+                ),
+            ]),
+        ];
+
+        if let Some(accuracy) = fix.accuracy_estimate {
+            lines.push(Line::from(vec![
+                Span::styled("Accuracy:    ", Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("{:.1} NM", accuracy),
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+        }
+
+        let fix_widget = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(" ★ CALCULATED FIX ★ ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            )
+            .alignment(Alignment::Center);
+
+        frame.render_widget(fix_widget, chunks[0]);
+
+        // Render status message if present
+        if let Some(error) = &form.error_message {
+            if chunks[1].height > 0 {
+                let paragraph = Paragraph::new(error.clone())
+                    .style(Style::default().fg(Color::Yellow))
+                    .block(
+                        Block::default()
+                            .title(" Status ")
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::Blue)),
+                    )
+                    .wrap(Wrap { trim: true });
+
+                frame.render_widget(paragraph, chunks[1]);
+            }
+        }
+    } else if let Some(error) = &form.error_message {
+        // Only show status message if there's no fix
         let paragraph = Paragraph::new(error.clone())
             .style(Style::default().fg(Color::Yellow))
             .block(
@@ -1295,54 +1408,8 @@ fn render_fix_results(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
             .wrap(Wrap { trim: true });
 
         frame.render_widget(paragraph, area);
-    } else if let Some(fix) = &form.fix_result {
-        let lat_sign = if fix.position.latitude >= 0.0 { "N" } else { "S" };
-        let lat_dms = celtnav::decimal_to_dms(fix.position.latitude.abs());
-
-        let lon_sign = if fix.position.longitude >= 0.0 { "E" } else { "W" };
-        let lon_dms = celtnav::decimal_to_dms(fix.position.longitude.abs());
-
-        let mut rows = vec![
-            Row::new(vec!["Fix Position".to_string(), "".to_string()]),
-            Row::new(vec![
-                "Latitude".to_string(),
-                format!("{} {:02}° {:05.2}'", lat_sign, lat_dms.degrees, lat_dms.minutes),
-            ]),
-            Row::new(vec![
-                "Longitude".to_string(),
-                format!("{} {:03}° {:05.2}'", lon_sign, lon_dms.degrees, lon_dms.minutes),
-            ]),
-            Row::new(vec!["Number of LOPs".to_string(), fix.num_lops.to_string()]),
-        ];
-
-        if let Some(accuracy) = fix.accuracy_estimate {
-            rows.push(Row::new(vec![
-                "Accuracy Estimate".to_string(),
-                format!("{:.1} NM", accuracy),
-            ]));
-        }
-
-        let table = Table::new(rows, [Constraint::Percentage(50), Constraint::Percentage(50)])
-            .header(
-                Row::new(vec!["Parameter", "Value"])
-                    .style(
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                    .bottom_margin(1),
-            )
-            .block(
-                Block::default()
-                    .title(" Calculated Fix ")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Blue)),
-            )
-            .style(Style::default().fg(Color::White))
-            .column_spacing(2);
-
-        frame.render_widget(table, area);
     } else {
+        // No fix and no message - show instructions
         let text = "Enter 2 or more sights, then press 'C' to compute fix";
         let paragraph = Paragraph::new(text)
             .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC))
@@ -2148,6 +2215,221 @@ mod tests {
         form.previous_field();
         assert_eq!(form.current_field, SightInputField::DRLatitude,
             "DRLatitude should immediately precede LatDirection");
+    }
+
+    // TDD Tests for Issue 2: Preserve Data Between Sights
+
+    #[test]
+    fn test_add_sight_first_sight_uses_defaults() {
+        let mut form = AutoComputeForm::new();
+
+        // Set up first sight with specific values
+        form.current_sight.date = "2024-03-15".to_string();
+        form.current_sight.time = "14:30:00".to_string();
+        form.current_sight.sextant_altitude = "45 30.5".to_string();
+        form.current_sight.index_error = "2.5".to_string();
+        form.current_sight.height_of_eye = "15".to_string();
+        form.current_sight.dr_latitude = "40 30.0".to_string();
+        form.current_sight.dr_longitude = "74 15.0".to_string();
+        form.current_sight.lat_direction = 'N';
+        form.current_sight.lon_direction = 'W';
+        form.current_sight.body = SightCelestialBody::Sun;
+
+        // Add the sight
+        form.add_sight();
+
+        // Verify sight was added
+        assert_eq!(form.sights.len(), 1);
+
+        // Current sight should have preserved certain fields from previous
+        // Date should be preserved
+        assert_eq!(form.current_sight.date, "2024-03-15");
+        // Time should be preserved
+        assert_eq!(form.current_sight.time, "14:30:00");
+        // DR position should be preserved (already working)
+        assert_eq!(form.current_sight.dr_latitude, "40 30.0");
+        assert_eq!(form.current_sight.dr_longitude, "74 15.0");
+        assert_eq!(form.current_sight.lat_direction, 'N');
+        assert_eq!(form.current_sight.lon_direction, 'W');
+        // Index error should be preserved
+        assert_eq!(form.current_sight.index_error, "2.5");
+        // Height of eye should be preserved
+        assert_eq!(form.current_sight.height_of_eye, "15");
+
+        // Sextant altitude should be reset
+        assert_eq!(form.current_sight.sextant_altitude, "");
+        // Body should be reset to default
+        assert_eq!(form.current_sight.body, SightCelestialBody::Sun);
+    }
+
+    #[test]
+    fn test_add_sight_second_sight_preserves_from_first() {
+        let mut form = AutoComputeForm::new();
+
+        // Set up and add first sight
+        form.current_sight.date = "2024-03-15".to_string();
+        form.current_sight.time = "14:30:00".to_string();
+        form.current_sight.sextant_altitude = "45 30.5".to_string();
+        form.current_sight.index_error = "2.5".to_string();
+        form.current_sight.height_of_eye = "15".to_string();
+        form.current_sight.dr_latitude = "40 30.0".to_string();
+        form.current_sight.dr_longitude = "74 15.0".to_string();
+        form.current_sight.lat_direction = 'N';
+        form.current_sight.lon_direction = 'W';
+        form.current_sight.body = SightCelestialBody::Venus;
+
+        form.add_sight();
+
+        // Modify current sight to different values for second sight
+        form.current_sight.sextant_altitude = "50 12.3".to_string();
+        form.current_sight.body = SightCelestialBody::Jupiter;
+
+        // Add second sight
+        form.add_sight();
+
+        assert_eq!(form.sights.len(), 2);
+
+        // Current sight should preserve from previous
+        assert_eq!(form.current_sight.date, "2024-03-15");
+        assert_eq!(form.current_sight.time, "14:30:00");
+        assert_eq!(form.current_sight.dr_latitude, "40 30.0");
+        assert_eq!(form.current_sight.dr_longitude, "74 15.0");
+        assert_eq!(form.current_sight.lat_direction, 'N');
+        assert_eq!(form.current_sight.lon_direction, 'W');
+        assert_eq!(form.current_sight.index_error, "2.5");
+        assert_eq!(form.current_sight.height_of_eye, "15");
+
+        // Sextant altitude should be reset
+        assert_eq!(form.current_sight.sextant_altitude, "");
+    }
+
+    #[test]
+    fn test_add_sight_preserves_through_multiple_sights() {
+        let mut form = AutoComputeForm::new();
+
+        // First sight
+        form.current_sight.date = "2024-03-15".to_string();
+        form.current_sight.time = "14:30:00".to_string();
+        form.current_sight.sextant_altitude = "45 30.5".to_string();
+        form.current_sight.index_error = "2.5".to_string();
+        form.current_sight.height_of_eye = "15".to_string();
+        form.current_sight.dr_latitude = "40 30.0".to_string();
+        form.current_sight.dr_longitude = "74 15.0".to_string();
+        form.current_sight.lat_direction = 'N';
+        form.current_sight.lon_direction = 'W';
+        form.add_sight();
+
+        // Second sight
+        form.current_sight.sextant_altitude = "50 12.3".to_string();
+        form.add_sight();
+
+        // Third sight
+        form.current_sight.sextant_altitude = "38 45.7".to_string();
+        form.add_sight();
+
+        assert_eq!(form.sights.len(), 3);
+
+        // All preserved fields should still match the original
+        assert_eq!(form.current_sight.date, "2024-03-15");
+        assert_eq!(form.current_sight.time, "14:30:00");
+        assert_eq!(form.current_sight.index_error, "2.5");
+        assert_eq!(form.current_sight.height_of_eye, "15");
+        assert_eq!(form.current_sight.dr_latitude, "40 30.0");
+        assert_eq!(form.current_sight.dr_longitude, "74 15.0");
+    }
+
+    #[test]
+    fn test_add_sight_sextant_altitude_always_resets() {
+        let mut form = AutoComputeForm::new();
+
+        form.current_sight.date = "2024-03-15".to_string();
+        form.current_sight.time = "14:30:00".to_string();
+        form.current_sight.sextant_altitude = "45 30.5".to_string();
+        form.current_sight.index_error = "0".to_string();
+        form.current_sight.height_of_eye = "10".to_string();
+        form.current_sight.dr_latitude = "40 0".to_string();
+        form.current_sight.dr_longitude = "74 0".to_string();
+
+        form.add_sight();
+
+        // Sextant altitude should always be empty for new sight
+        assert_eq!(form.current_sight.sextant_altitude, "",
+            "Sextant altitude should be reset to empty string");
+
+        // Try with different altitude
+        form.current_sight.sextant_altitude = "60 45.2".to_string();
+        form.add_sight();
+
+        assert_eq!(form.current_sight.sextant_altitude, "",
+            "Sextant altitude should be reset again");
+    }
+
+    // TDD Tests for Issue 1: Display Computed Fix Prominently
+
+    #[test]
+    fn test_fix_result_stored_after_computation() {
+        let mut form = AutoComputeForm::new();
+
+        // Add two sights
+        let mut sight1 = Sight::new();
+        sight1.body = SightCelestialBody::Sun;
+        sight1.date = "2024-03-15".to_string();
+        sight1.time = "14:30:00".to_string();
+        sight1.sextant_altitude = "45 30".to_string();
+        sight1.index_error = "0".to_string();
+        sight1.height_of_eye = "10".to_string();
+        sight1.dr_latitude = "40 0".to_string();
+        sight1.dr_longitude = "74 0".to_string();
+        sight1.lat_direction = 'N';
+        sight1.lon_direction = 'W';
+        form.sights.push(sight1);
+
+        let mut sight2 = Sight::new();
+        sight2.body = SightCelestialBody::Venus;
+        sight2.date = "2024-03-15".to_string();
+        sight2.time = "14:30:00".to_string();
+        sight2.sextant_altitude = "30 15".to_string();
+        sight2.index_error = "0".to_string();
+        sight2.height_of_eye = "10".to_string();
+        sight2.dr_latitude = "40 0".to_string();
+        sight2.dr_longitude = "74 0".to_string();
+        sight2.lat_direction = 'N';
+        sight2.lon_direction = 'W';
+        form.sights.push(sight2);
+
+        // Initially no fix
+        assert!(form.fix_result.is_none());
+
+        // Compute fix
+        form.compute_fix();
+
+        // Fix should be computed (or error message should explain why not)
+        // Either way, the fix_result field should be updated
+        if form.fix_result.is_none() {
+            assert!(form.error_message.is_some(), "Should have error message if fix failed");
+        }
+    }
+
+    #[test]
+    fn test_fix_includes_all_required_info() {
+        // Test that Fix struct has all fields we need to display
+        use celtnav::fix_calculation::{Fix, Position};
+
+        let fix = Fix {
+            position: Position {
+                latitude: 40.5,
+                longitude: -74.2,
+            },
+            num_lops: 3,
+            accuracy_estimate: Some(1.5),
+        };
+
+        // Verify we can access all fields needed for display
+        assert_eq!(fix.position.latitude, 40.5);
+        assert_eq!(fix.position.longitude, -74.2);
+        assert_eq!(fix.num_lops, 3);
+        assert!(fix.accuracy_estimate.is_some());
+        assert_eq!(fix.accuracy_estimate.unwrap(), 1.5);
     }
 }
 
