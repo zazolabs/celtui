@@ -8,6 +8,7 @@ use celtnav::sight_reduction::{
     compute_altitude, compute_azimuth, compute_intercept,
     apply_refraction_correction, apply_dip_correction,
     apply_semidiameter_correction, apply_parallax_correction,
+    optimize_chosen_position,
     SightData, AltitudeCorrections,
 };
 
@@ -416,4 +417,124 @@ fn test_azimuth_range_validity() {
                 "Azimuth must be in range [0, 360), got {} for lat={}, dec={}, lha={}",
                 zn, lat, dec, lha);
     }
+}
+
+/// Test optimize_chosen_position rounds latitude to nearest whole degree
+#[test]
+fn test_optimize_chosen_position_latitude_rounding() {
+    // Test rounding down
+    let (chosen_lat, _) = optimize_chosen_position(45.3, -123.0, 245.0);
+    assert_relative_eq!(chosen_lat, 45.0, epsilon = 0.01);
+
+    // Test rounding up
+    let (chosen_lat, _) = optimize_chosen_position(45.7, -123.0, 245.0);
+    assert_relative_eq!(chosen_lat, 46.0, epsilon = 0.01);
+
+    // Test exact rounding at 0.5
+    let (chosen_lat, _) = optimize_chosen_position(45.5, -123.0, 245.0);
+    assert_relative_eq!(chosen_lat, 46.0, epsilon = 0.01);
+
+    // Test negative latitude
+    let (chosen_lat, _) = optimize_chosen_position(-30.3, 150.0, 100.0);
+    assert_relative_eq!(chosen_lat, -30.0, epsilon = 0.01);
+
+    let (chosen_lat, _) = optimize_chosen_position(-30.7, 150.0, 100.0);
+    assert_relative_eq!(chosen_lat, -31.0, epsilon = 0.01);
+}
+
+/// Test optimize_chosen_position adjusts longitude to make LHA whole number
+#[test]
+fn test_optimize_chosen_position_lha_whole_west_longitude() {
+    // West longitude (negative): LHA = GHA + Longitude
+    // GHA = 245.6°, DR Lon = -123.25° W
+    // Current LHA = 245.6 - 123.25 = 122.35°
+    // Want LHA = 122° or 123°
+    // For LHA = 122°: need Lon = 122 - 245.6 = -123.6° W
+    // For LHA = 123°: need Lon = 123 - 245.6 = -122.6° W
+    let gha = 245.6;
+    let dr_lon = -123.25; // West
+
+    let (_, chosen_lon) = optimize_chosen_position(45.0, dr_lon, gha);
+
+    // Calculate resulting LHA
+    let lha = (gha + chosen_lon + 360.0) % 360.0;
+
+    // LHA should be a whole number (within 0.01 degrees)
+    assert_relative_eq!(lha.round(), lha, epsilon = 0.01);
+
+    // Chosen longitude should be close to DR (within ~1 degree)
+    assert!((chosen_lon - dr_lon).abs() < 1.0,
+           "Chosen longitude should be close to DR, got {} vs {}", chosen_lon, dr_lon);
+}
+
+/// Test optimize_chosen_position with East longitude
+#[test]
+fn test_optimize_chosen_position_lha_whole_east_longitude() {
+    // East longitude (positive): LHA = GHA + Longitude
+    // GHA = 100.7°, DR Lon = 150.35° E
+    // Current LHA = 100.7 + 150.35 = 251.05°
+    // Want LHA = 251° or 252°
+    let gha = 100.7;
+    let dr_lon = 150.35; // East
+
+    let (_, chosen_lon) = optimize_chosen_position(45.0, dr_lon, gha);
+
+    // Calculate resulting LHA
+    let lha = (gha + chosen_lon + 360.0) % 360.0;
+
+    // LHA should be a whole number
+    assert_relative_eq!(lha.round(), lha, epsilon = 0.01);
+
+    // Chosen longitude should be close to DR
+    assert!((chosen_lon - dr_lon).abs() < 1.0,
+           "Chosen longitude should be close to DR, got {} vs {}", chosen_lon, dr_lon);
+}
+
+/// Test optimize_chosen_position edge case near 360°/0°
+#[test]
+fn test_optimize_chosen_position_lha_wrap_around() {
+    // Test case where LHA wraps around 360°/0°
+    // GHA = 359.3°, DR Lon = 1.2° E
+    // Current LHA = 359.3 + 1.2 = 360.5° = 0.5°
+    // Want LHA = 0° or 1°
+    let gha = 359.3;
+    let dr_lon = 1.2; // East
+
+    let (_, chosen_lon) = optimize_chosen_position(45.0, dr_lon, gha);
+
+    // Calculate resulting LHA
+    let lha = (gha + chosen_lon + 360.0) % 360.0;
+
+    // LHA should be a whole number
+    assert_relative_eq!(lha.round(), lha, epsilon = 0.01);
+}
+
+/// Test optimize_chosen_position with example from requirements
+#[test]
+fn test_optimize_chosen_position_example_from_requirements() {
+    // From requirements:
+    // GHA = 245° 37.2' = 245.62°, DR Lon = 123° 15.0' W = -123.25°
+    // Current LHA = 245.62 + (-123.25) = 122.37°
+    // Want LHA = 122° or 123° (nearest whole)
+    // For LHA = 122°: need Lon = 122 - 245.62 = -123.62° W
+    // For LHA = 123°: need Lon = 123 - 245.62 = -122.62° W
+    // Choose closer one: -123.62° is closer to DR
+    let gha = 245.62;
+    let dr_lon = -123.25; // 123° 15.0' W
+    let dr_lat = 45.54; // 45° 32.5' N
+
+    let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_lat, dr_lon, gha);
+
+    // Latitude should be rounded to 46° (45.54 rounds up)
+    assert_relative_eq!(chosen_lat, 46.0, epsilon = 0.01);
+
+    // Calculate resulting LHA
+    let lha = (gha + chosen_lon + 360.0) % 360.0;
+
+    // LHA should be whole number
+    assert_relative_eq!(lha.round(), lha, epsilon = 0.01);
+
+    // Should be close to 122° or 123°
+    assert!(lha >= 121.5 && lha <= 123.5,
+           "LHA should be close to 122° or 123°, got {}", lha);
 }

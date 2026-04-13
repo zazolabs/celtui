@@ -285,6 +285,71 @@ pub fn apply_parallax_correction(horizontal_parallax: f64, apparent_altitude: f6
     horizontal_parallax * apparent_altitude.to_radians().cos()
 }
 
+/// Optimizes the chosen position (AP - Assumed Position) for easier sight reduction
+///
+/// Following standard celestial navigation practice, this function:
+/// 1. Rounds latitude to the nearest whole degree
+/// 2. Adjusts longitude so that LHA (Local Hour Angle) is a whole number
+///
+/// This optimization makes sight reduction table lookups much easier since
+/// tables are indexed by whole degrees.
+///
+/// # Arguments
+/// * `dr_lat` - Dead reckoning latitude in decimal degrees (North positive, South negative)
+/// * `dr_lon` - Dead reckoning longitude in decimal degrees (East positive, West negative)
+/// * `gha` - Greenwich Hour Angle in decimal degrees
+///
+/// # Returns
+/// Tuple of (chosen_lat, chosen_lon) optimized for whole-degree LHA
+///
+/// # Formula
+/// LHA = GHA + Longitude (for both East and West, using signed convention)
+/// We adjust longitude so LHA is exactly X° 00.0'
+///
+/// # Examples
+/// ```
+/// use celtnav::sight_reduction::optimize_chosen_position;
+///
+/// // DR position: 45° 32.5' N, 123° 15.0' W
+/// // GHA: 245° 37.2'
+/// let dr_lat = 45.542; // 45° 32.5' N
+/// let dr_lon = -123.25; // 123° 15.0' W (negative for West)
+/// let gha = 245.62; // 245° 37.2'
+///
+/// let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_lat, dr_lon, gha);
+///
+/// // Latitude rounded to nearest degree: 46° N
+/// assert!((chosen_lat - 46.0).abs() < 0.01);
+///
+/// // Longitude adjusted so LHA is whole number
+/// let lha = (gha + chosen_lon + 360.0) % 360.0;
+/// assert!((lha - lha.round()).abs() < 0.01);
+/// ```
+pub fn optimize_chosen_position(dr_lat: f64, dr_lon: f64, gha: f64) -> (f64, f64) {
+    // Round latitude to nearest whole degree
+    let chosen_lat = dr_lat.round();
+
+    // Calculate LHA with DR longitude
+    // LHA = GHA + Longitude (using signed convention)
+    let lha_with_dr = (gha + dr_lon + 360.0) % 360.0;
+
+    // Find fractional part of LHA
+    let lha_frac = lha_with_dr - lha_with_dr.floor();
+
+    // Adjust longitude to make LHA whole
+    // If fractional part <= 0.5, round down (subtract fraction)
+    // If fractional part > 0.5, round up (add to reach next whole degree)
+    let lon_adjustment = if lha_frac <= 0.5 {
+        -lha_frac
+    } else {
+        1.0 - lha_frac
+    };
+
+    let chosen_lon = dr_lon + lon_adjustment;
+
+    (chosen_lat, chosen_lon)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

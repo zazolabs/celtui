@@ -9,6 +9,7 @@ use celtnav::sight_reduction::{
     compute_altitude, compute_azimuth, compute_intercept, SightData,
     apply_refraction_correction, apply_dip_correction,
     apply_semidiameter_correction, apply_parallax_correction,
+    optimize_chosen_position,
 };
 use celtnav::fix_calculation::{LineOfPosition, fix_from_multiple_lops, Fix, advance_lop};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -774,6 +775,11 @@ impl AutoComputeForm {
         let almanac_body = sight.body.to_almanac_body();
         let position = get_body_position(almanac_body, datetime)?;
 
+        // Optimize chosen position for easier sight reduction
+        // - Round latitude to nearest whole degree
+        // - Adjust longitude to make LHA a whole number
+        let (chosen_lat, chosen_lon) = optimize_chosen_position(dr_latitude, dr_longitude, position.gha);
+
         // Apply corrections to get observed altitude
         let mut ho = sextant_altitude;
         ho += index_error / 60.0;
@@ -788,12 +794,12 @@ impl AutoComputeForm {
             ho += apply_parallax_correction(0.95, ho);
         }
 
-        // Calculate LHA
-        let lha = (position.gha + dr_longitude + 360.0) % 360.0;
+        // Calculate LHA using optimized chosen position
+        let lha = (position.gha + chosen_lon + 360.0) % 360.0;
 
-        // Compute Hc and Zn
+        // Compute Hc and Zn using chosen position
         let sight_data = SightData {
-            latitude: dr_latitude,
+            latitude: chosen_lat,
             declination: position.declination,
             local_hour_angle: lha,
         };
@@ -802,6 +808,7 @@ impl AutoComputeForm {
         let zn = compute_azimuth(&sight_data);
         let intercept = compute_intercept(&sight_data, ho);
 
+        // LOP still uses DR position for advancing and fix calculation
         let lop = LineOfPosition {
             azimuth: zn,
             intercept,
@@ -809,10 +816,11 @@ impl AutoComputeForm {
             dr_longitude,
         };
 
+        // Display data shows the chosen (optimized) position
         let display_data = LopDisplayData {
             body_name: sight.body.name(),
-            chosen_lat: dr_latitude,
-            chosen_lon: dr_longitude,
+            chosen_lat,
+            chosen_lon,
             hc,
             intercept,
             azimuth: zn,
@@ -1519,7 +1527,7 @@ fn render_two_pane_layout(frame: &mut Frame, area: Rect, form: &AutoComputeForm,
     render_fix_pane(frame, horizontal_chunks[1], fix);
 }
 
-/// Renders the LOP data in the left pane
+/// Renders the LOP data in the left pane, split into two columns
 fn render_lop_pane(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData]) {
     if lop_data.is_empty() {
         let text = "No LOP data available";
@@ -1536,9 +1544,32 @@ fn render_lop_pane(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData]) {
         return;
     }
 
+    // Split LOP pane into two columns
+    let lop_columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),  // Left column
+            Constraint::Percentage(50),  // Right column
+        ])
+        .split(area);
+
+    // Split LOPs into two halves
+    let mid = (lop_data.len() + 1) / 2;
+    let left_lops = &lop_data[..mid];
+    let right_lops = &lop_data[mid..];
+
+    // Render each column
+    render_lop_column(frame, lop_columns[0], left_lops, 0);
+    render_lop_column(frame, lop_columns[1], right_lops, mid);
+}
+
+/// Renders a single column of LOPs
+fn render_lop_column(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData], start_index: usize) {
     let mut lop_lines = Vec::new();
 
     for (i, lop) in lop_data.iter().enumerate() {
+        let sight_number = start_index + i + 1;
+
         let lat_sign = if lop.chosen_lat >= 0.0 { "N" } else { "S" };
         let lat_dms = celtnav::decimal_to_dms(lop.chosen_lat.abs());
 
@@ -1550,7 +1581,7 @@ fn render_lop_pane(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData]) {
         // Sight header
         lop_lines.push(Line::from(vec![
             Span::styled(
-                format!("Sight {}: ", i + 1),
+                format!("Sight {}: ", sight_number),
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             ),
             Span::styled(
@@ -1561,14 +1592,14 @@ fn render_lop_pane(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData]) {
 
         // Chosen position - split into two lines for readability
         lop_lines.push(Line::from(vec![
-            Span::styled("  Chosen Pos: ", Style::default().fg(Color::Cyan)),
+            Span::styled("  Chosen: ", Style::default().fg(Color::Cyan)),
             Span::styled(
                 format!("{} {:02}° {:05.2}'", lat_sign, lat_dms.degrees, lat_dms.minutes),
                 Style::default().fg(Color::White)
             ),
         ]));
         lop_lines.push(Line::from(vec![
-            Span::styled("              ", Style::default()),
+            Span::styled("          ", Style::default()),
             Span::styled(
                 format!("{} {:03}° {:05.2}'", lon_sign, lon_dms.degrees, lon_dms.minutes),
                 Style::default().fg(Color::White)
@@ -1591,7 +1622,7 @@ fn render_lop_pane(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData]) {
             Color::Red
         };
         lop_lines.push(Line::from(vec![
-            Span::styled("  Intercept: ", Style::default().fg(Color::Cyan)),
+            Span::styled("  Int: ", Style::default().fg(Color::Cyan)),
             Span::styled(
                 lop.intercept_with_direction(),
                 Style::default().fg(intercept_color)
@@ -1600,23 +1631,29 @@ fn render_lop_pane(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData]) {
 
         // Azimuth
         lop_lines.push(Line::from(vec![
-            Span::styled("  Azimuth: ", Style::default().fg(Color::Cyan)),
+            Span::styled("  Az: ", Style::default().fg(Color::Cyan)),
             Span::styled(
                 format!("{:03.0}° T", lop.azimuth),
                 Style::default().fg(Color::White)
             ),
         ]));
 
-        // Blank line between sights
+        // Blank line between sights (except for the last one)
         if i < lop_data.len() - 1 {
             lop_lines.push(Line::from(""));
         }
     }
 
+    let title = if start_index == 0 {
+        " Lines of Position "
+    } else {
+        " "
+    };
+
     let lop_widget = Paragraph::new(lop_lines)
         .block(
             Block::default()
-                .title(" Lines of Position ")
+                .title(title)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Blue)),
         );
@@ -2853,6 +2890,105 @@ mod tests {
         assert!(lop.chosen_lon.abs() <= 180.0, "Longitude should be within valid range");
         assert!(lop.hc >= 0.0 && lop.hc <= 90.0, "Hc should be within valid altitude range");
         assert!(lop.azimuth >= 0.0 && lop.azimuth < 360.0, "Azimuth should be 0-360 degrees");
+    }
+
+    #[test]
+    fn test_lop_column_split_even_number() {
+        // Test that 6 LOPs are split into 3 + 3
+        let lop_data: Vec<LopDisplayData> = (0..6).map(|i| LopDisplayData {
+            body_name: format!("Body{}", i + 1),
+            chosen_lat: 45.0,
+            chosen_lon: -123.0,
+            hc: 35.0,
+            intercept: 2.0,
+            azimuth: 125.0,
+        }).collect();
+
+        let mid = (lop_data.len() + 1) / 2;
+        let left_lops = &lop_data[..mid];
+        let right_lops = &lop_data[mid..];
+
+        assert_eq!(left_lops.len(), 3);
+        assert_eq!(right_lops.len(), 3);
+        assert_eq!(left_lops[0].body_name, "Body1");
+        assert_eq!(right_lops[0].body_name, "Body4");
+    }
+
+    #[test]
+    fn test_lop_column_split_odd_number() {
+        // Test that 5 LOPs are split into 3 + 2 (left column gets more)
+        let lop_data: Vec<LopDisplayData> = (0..5).map(|i| LopDisplayData {
+            body_name: format!("Body{}", i + 1),
+            chosen_lat: 45.0,
+            chosen_lon: -123.0,
+            hc: 35.0,
+            intercept: 2.0,
+            azimuth: 125.0,
+        }).collect();
+
+        let mid = (lop_data.len() + 1) / 2;
+        let left_lops = &lop_data[..mid];
+        let right_lops = &lop_data[mid..];
+
+        assert_eq!(left_lops.len(), 3);
+        assert_eq!(right_lops.len(), 2);
+        assert_eq!(left_lops[0].body_name, "Body1");
+        assert_eq!(right_lops[0].body_name, "Body4");
+    }
+
+    #[test]
+    fn test_lop_column_split_single_lop() {
+        // Test that 1 LOP goes to left column only
+        let lop_data: Vec<LopDisplayData> = vec![LopDisplayData {
+            body_name: "Sun".to_string(),
+            chosen_lat: 45.0,
+            chosen_lon: -123.0,
+            hc: 35.0,
+            intercept: 2.0,
+            azimuth: 125.0,
+        }];
+
+        let mid = (lop_data.len() + 1) / 2;
+        let left_lops = &lop_data[..mid];
+        let right_lops = &lop_data[mid..];
+
+        assert_eq!(left_lops.len(), 1);
+        assert_eq!(right_lops.len(), 0);
+    }
+
+    #[test]
+    fn test_chosen_position_is_optimized() {
+        // Test that chosen position is optimized (latitude rounded, longitude adjusted for whole LHA)
+        let mut form = AutoComputeForm::new();
+
+        // Set up a sight with fractional position
+        form.current_sight = Sight {
+            body: SightCelestialBody::Sun,
+            date: "2024-03-15".to_string(),
+            time: "12:00:00".to_string(),
+            sextant_altitude: "35 30.0".to_string(),
+            index_error: "0".to_string(),
+            height_of_eye: "10".to_string(),
+            dr_latitude: "45 32.5".to_string(),  // 45.542° should round to 46°
+            dr_longitude: "123 15.0".to_string(), // Will be adjusted for whole LHA
+            lat_direction: 'N',
+            lon_direction: 'W',
+        };
+
+        // Add the sight
+        form.add_sight();
+
+        // Try to compute fix (it will fail due to insufficient sights, but LOP data will be created)
+        form.compute_fix();
+
+        if !form.lop_data.is_empty() {
+            let lop = &form.lop_data[0];
+
+            // Chosen latitude should be rounded to whole degree
+            let lat_frac = lop.chosen_lat - lop.chosen_lat.floor();
+            assert!(lat_frac < 0.01 || lat_frac > 0.99,
+                   "Chosen latitude should be whole degree, got {}", lop.chosen_lat);
+        }
     }
 }
 
