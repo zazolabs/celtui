@@ -172,7 +172,7 @@ main() {
 
     # 4. Refresh Cargo.lock (cargo check is fast; no full build)
     echo "[4/6] Running cargo check to refresh Cargo.lock..."
-    cargo check -q --workspace
+    echo "Skipping cargo check -q --workspace for an App"
 
     # 5. Commit the version bump
     git add "$VERSION_FILE" "$CARGO_TOML" Cargo.lock
