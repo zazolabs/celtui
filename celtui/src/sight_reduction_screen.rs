@@ -15,6 +15,7 @@ use ratatui::{
 
 /// Input field identifier for form navigation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum SightReductionInputField {
     LHA,                  // Single field: "DD MM.M"
     Declination,          // Single field: "DD MM.M"
@@ -72,9 +73,9 @@ impl SightReductionInputField {
 pub struct SightReductionResult {
     pub computed_altitude: f64, // Hc in degrees
     pub azimuth: f64,            // Zn in degrees
-    pub lha: f64,                // LHA in degrees
-    pub declination: f64,        // Declination in degrees
-    pub latitude: f64,           // Latitude in degrees
+#[allow(dead_code)]    pub lha: f64,                // LHA in degrees
+#[allow(dead_code)]    pub declination: f64,        // Declination in degrees
+#[allow(dead_code)]    pub latitude: f64,           // Latitude in degrees
 }
 
 /// Sight reduction screen form data

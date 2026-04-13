@@ -22,7 +22,7 @@ fn test_gha_from_utc_noon() {
 
     // At 12:00 UTC, GHA should be approximately 180 degrees
     // (allowing for equation of time variation of ~15 degrees)
-    assert!(gha >= 165.0 && gha <= 195.0,
+    assert!((165.0..=195.0).contains(&gha),
             "GHA at noon should be approximately 180°, got {}", gha);
 }
 
@@ -51,7 +51,7 @@ fn test_gha_from_utc_morning() {
     let gha = gha_from_utc(&dt);
 
     // At 06:00 UTC, GHA should be approximately 90°
-    assert!(gha >= 75.0 && gha <= 105.0,
+    assert!((75.0..=105.0).contains(&gha),
             "GHA at 06:00 should be approximately 90°, got {}", gha);
 }
 
@@ -65,7 +65,7 @@ fn test_gha_from_utc_evening() {
     let gha = gha_from_utc(&dt);
 
     // At 18:00 UTC, GHA should be approximately 270°
-    assert!(gha >= 255.0 && gha <= 285.0,
+    assert!((255.0..=285.0).contains(&gha),
             "GHA at 18:00 should be approximately 270°, got {}", gha);
 }
 
@@ -146,7 +146,7 @@ fn test_gst_from_utc_vernal_equinox() {
 
     // GST should be near 0° or 360° at vernal equinox midnight
     // Allow some variation due to exact timing
-    assert!(gst >= 0.0 && gst <= 360.0,
+    assert!((0.0..=360.0).contains(&gst),
             "GST must be in range 0-360°, got {}", gst);
 }
 
@@ -160,7 +160,7 @@ fn test_gst_from_utc_known_date() {
     let gst = gst_from_utc(&dt);
 
     // GST should be in valid range
-    assert!(gst >= 0.0 && gst < 360.0,
+    assert!((0.0..360.0).contains(&gst),
             "GST must be in range 0-360°, got {}", gst);
 }
 
@@ -184,7 +184,7 @@ fn test_gst_from_utc_time_advance() {
 
     // GST advances ~15.04 degrees per hour
     // Allow some tolerance for calculation method
-    assert!(diff >= 14.0 && diff <= 16.0,
+    assert!((14.0..=16.0).contains(&diff),
             "GST should advance ~15° per hour, got {} degrees", diff);
 }
 
@@ -199,7 +199,7 @@ fn test_gha_range_validity() {
 
     for dt in test_dates {
         let gha = gha_from_utc(&dt);
-        assert!(gha >= 0.0 && gha < 360.0,
+        assert!((0.0..360.0).contains(&gha),
                 "GHA must be in range [0, 360), got {} for {:?}", gha, dt);
     }
 }
@@ -216,7 +216,7 @@ fn test_lha_range_validity() {
 
     for (gha, longitude) in test_cases {
         let lha = lha_from_gha(gha, longitude);
-        assert!(lha >= 0.0 && lha < 360.0,
+        assert!((0.0..360.0).contains(&lha),
                 "LHA must be in range [0, 360), got {} for GHA={}, Long={}",
                 lha, gha, longitude);
     }

@@ -57,6 +57,7 @@ impl AlmanacCelestialBody {
     }
 
     /// Convert to almanac body type
+    #[allow(clippy::wrong_self_convention)]
     fn to_almanac_body(&self, star_name: &str) -> Option<AlmanacBody> {
         match self {
             AlmanacCelestialBody::Sun => Some(AlmanacBody::Sun),
@@ -226,9 +227,8 @@ impl AlmanacForm {
     pub fn update_star_filter(&mut self) {
         self.star_filter_matches = self.filter_stars();
         // Reset selected index if it's out of bounds
-        if self.star_filter_matches.is_empty() {
-            self.star_selected_index = 0;
-        } else if self.star_selected_index >= self.star_filter_matches.len() {
+        if self.star_filter_matches.is_empty() ||
+            self.star_selected_index >= self.star_filter_matches.len() {
             self.star_selected_index = 0;
         }
     }

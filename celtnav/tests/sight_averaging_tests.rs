@@ -26,6 +26,58 @@ pub struct AveragedSight {
     pub avg_altitude_minutes: f64,
 }
 
+// Implementation of sight averaging functions
+
+/// Average multiple sextant observations
+///
+/// Calculates the mean time and mean altitude from multiple observations.
+/// Returns None if there are fewer than 2 observations.
+fn average_sights(observations: &[SextantObservation]) -> Option<AveragedSight> {
+    if observations.len() < 2 {
+        return None;
+    }
+
+    // Convert times to seconds since midnight for averaging
+    let total_seconds: u32 = observations
+        .iter()
+        .map(|obs| obs.time.num_seconds_from_midnight())
+        .sum();
+
+    let avg_seconds = total_seconds / observations.len() as u32;
+    let avg_time = NaiveTime::from_num_seconds_from_midnight_opt(avg_seconds, 0).unwrap();
+
+    // Convert altitudes to total arcminutes, average, then convert back
+    let total_arcminutes: f64 = observations
+        .iter()
+        .map(|obs| obs.altitude_degrees * 60.0 + obs.altitude_minutes)
+        .sum();
+
+    let avg_arcminutes = total_arcminutes / observations.len() as f64;
+    let avg_degrees = (avg_arcminutes / 60.0).floor();
+    let avg_minutes = avg_arcminutes - (avg_degrees * 60.0);
+
+    Some(AveragedSight {
+        avg_time,
+        avg_altitude_degrees: avg_degrees,
+        avg_altitude_minutes: avg_minutes,
+    })
+}
+
+/// Validate that altitude is within acceptable range (0-90 degrees)
+fn validate_altitude(degrees: f64, minutes: f64) -> bool {
+    if !(0.0..=90.0).contains(&degrees) {
+        return false;
+    }
+
+    if !(0.0..60.0).contains(&minutes) {
+        return false;
+    }
+
+    // Check if total altitude exceeds 90 degrees
+    let total_degrees = degrees + (minutes / 60.0);
+    (0.0..=90.0).contains(&total_degrees)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,56 +227,4 @@ mod tests {
         let valid = validate_altitude(obs_valid.altitude_degrees, obs_valid.altitude_minutes);
         assert!(valid);
     }
-}
-
-// Implementation of sight averaging functions
-
-/// Average multiple sextant observations
-///
-/// Calculates the mean time and mean altitude from multiple observations.
-/// Returns None if there are fewer than 2 observations.
-fn average_sights(observations: &[SextantObservation]) -> Option<AveragedSight> {
-    if observations.len() < 2 {
-        return None;
-    }
-
-    // Convert times to seconds since midnight for averaging
-    let total_seconds: u32 = observations
-        .iter()
-        .map(|obs| obs.time.num_seconds_from_midnight())
-        .sum();
-
-    let avg_seconds = total_seconds / observations.len() as u32;
-    let avg_time = NaiveTime::from_num_seconds_from_midnight_opt(avg_seconds, 0).unwrap();
-
-    // Convert altitudes to total arcminutes, average, then convert back
-    let total_arcminutes: f64 = observations
-        .iter()
-        .map(|obs| obs.altitude_degrees * 60.0 + obs.altitude_minutes)
-        .sum();
-
-    let avg_arcminutes = total_arcminutes / observations.len() as f64;
-    let avg_degrees = (avg_arcminutes / 60.0).floor();
-    let avg_minutes = avg_arcminutes - (avg_degrees * 60.0);
-
-    Some(AveragedSight {
-        avg_time,
-        avg_altitude_degrees: avg_degrees,
-        avg_altitude_minutes: avg_minutes,
-    })
-}
-
-/// Validate that altitude is within acceptable range (0-90 degrees)
-fn validate_altitude(degrees: f64, minutes: f64) -> bool {
-    if degrees < 0.0 || degrees > 90.0 {
-        return false;
-    }
-
-    if minutes < 0.0 || minutes >= 60.0 {
-        return false;
-    }
-
-    // Check if total altitude exceeds 90 degrees
-    let total_degrees = degrees + (minutes / 60.0);
-    total_degrees >= 0.0 && total_degrees <= 90.0
 }

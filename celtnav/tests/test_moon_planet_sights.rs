@@ -194,13 +194,13 @@ fn test_moon_complete_sight_with_hc() {
 
     // Verify results are reasonable
     assert!(
-        hc >= -90.0 && hc <= 90.0,
+        (-90.0..=90.0).contains(&hc),
         "Hc should be in range [-90°, 90°], got {:.2}°",
         hc
     );
 
     assert!(
-        zn >= 0.0 && zn < 360.0,
+        (0.0..360.0).contains(&zn),
         "Zn should be in range [0°, 360°), got {:.2}°",
         zn
     );
@@ -257,8 +257,8 @@ fn test_jupiter_complete_sight() {
     println!("  Hc: {:.0}° {:.1}'", hc.floor(), hc.fract() * 60.0);
     println!("  Zn: {:.0}°", zn.round());
 
-    assert!(hc >= -90.0 && hc <= 90.0);
-    assert!(zn >= 0.0 && zn < 360.0);
+    assert!((-90.0..=90.0).contains(&hc));
+    assert!((0.0..360.0).contains(&zn));
 
     // Jupiter should be visible (above horizon) at this time/location
     // or below horizon depending on actual position

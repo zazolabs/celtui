@@ -1078,7 +1078,7 @@ mod tests {
         let gha = sun_gha(dt);
 
         assert!(
-            gha >= 0.0 && gha < 360.0,
+            (0.0..360.0).contains(&gha),
             "Sun GHA must be in range [0, 360), got {}°",
             gha
         );
@@ -1091,7 +1091,7 @@ mod tests {
         let dec = sun_declination(dt);
 
         assert!(
-            dec >= -24.0 && dec <= 24.0,
+            (-24.0..=24.0).contains(&dec),
             "Sun declination must be in range [-23.5, +23.5], got {}°",
             dec
         );
@@ -1105,7 +1105,7 @@ mod tests {
         let gha = moon_gha(dt);
 
         assert!(
-            gha >= 0.0 && gha < 360.0,
+            (0.0..360.0).contains(&gha),
             "Moon GHA must be in range [0, 360), got {}°",
             gha
         );
@@ -1118,7 +1118,7 @@ mod tests {
         let dec = moon_declination(dt);
 
         assert!(
-            dec >= -29.0 && dec <= 29.0,
+            (-29.0..=29.0).contains(&dec),
             "Moon declination must be in range [-28.5, +28.5], got {}°",
             dec
         );
@@ -1229,7 +1229,7 @@ mod tests {
         let gha = gha_aries(dt);
 
         assert!(
-            gha >= 0.0 && gha < 360.0,
+            (0.0..360.0).contains(&gha),
             "GHA Aries must be in range [0, 360), got {}°",
             gha
         );
@@ -1264,7 +1264,7 @@ mod tests {
         let gha_val = gha.unwrap();
 
         assert!(
-            gha_val >= 0.0 && gha_val < 360.0,
+            (0.0..360.0).contains(&gha_val),
             "Star GHA must be in range [0, 360), got {}°",
             gha_val
         );
@@ -1341,7 +1341,7 @@ mod tests {
         for planet in [Planet::Venus, Planet::Mars, Planet::Jupiter, Planet::Saturn] {
             let gha = planet_gha(planet, dt);
             assert!(
-                gha >= 0.0 && gha < 360.0,
+                (0.0..360.0).contains(&gha),
                 "{} GHA must be in range [0, 360), got {}°",
                 planet.name(),
                 gha
@@ -1357,7 +1357,7 @@ mod tests {
             let dec = planet_declination(planet, dt);
             // Planets stay within the zodiac band (roughly ±28°)
             assert!(
-                dec >= -30.0 && dec <= 30.0,
+                (-30.0..=30.0).contains(&dec),
                 "{} declination should be within zodiac band, got {}°",
                 planet.name(),
                 dec
@@ -1723,7 +1723,7 @@ mod tests {
             ("Suhail",         222.755, -43.535),
         ];
 
-        let dt = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let _dt = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
         let year = 2026.0_f64;
 
         for (name, exp_sha, exp_dec) in &reference {

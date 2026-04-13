@@ -39,7 +39,7 @@ impl TwilightInputField {
         ]
     }
 
-    pub fn label(&self) -> &str {
+#[allow(dead_code)]    pub fn label(&self) -> &str {
         match self {
             TwilightInputField::Date => "Date (YYYY-MM-DD)",
             TwilightInputField::Latitude => "DR Latitude (DD MM.M)",
@@ -163,7 +163,7 @@ impl TwilightForm {
             return Err("Latitude is required".to_string());
         }
 
-        let parts: Vec<&str> = self.latitude.trim().split_whitespace().collect();
+        let parts: Vec<&str> = self.latitude.split_whitespace().collect();
 
         if parts.len() != 2 {
             return Err("Latitude format: DD MM.M (e.g., '40 30.0')".to_string());
@@ -175,11 +175,11 @@ impl TwilightForm {
         let minutes: f64 = parts[1].parse()
             .map_err(|_| "Invalid minutes".to_string())?;
 
-        if degrees < 0 || degrees > 90 {
+        if !(0..=90).contains(&degrees) {
             return Err("Latitude degrees must be 0-90".to_string());
         }
 
-        if minutes < 0.0 || minutes >= 60.0 {
+        if !(0.0..60.0).contains(&minutes) {
             return Err("Minutes must be 0-60".to_string());
         }
 
@@ -198,7 +198,7 @@ impl TwilightForm {
             return Err("Longitude is required".to_string());
         }
 
-        let parts: Vec<&str> = self.longitude.trim().split_whitespace().collect();
+        let parts: Vec<&str> = self.longitude.split_whitespace().collect();
 
         if parts.len() != 2 {
             return Err("Longitude format: DDD MM.M (e.g., '074 00.6')".to_string());
@@ -210,11 +210,11 @@ impl TwilightForm {
         let minutes: f64 = parts[1].parse()
             .map_err(|_| "Invalid minutes".to_string())?;
 
-        if degrees < 0 || degrees > 180 {
+        if !(0..=180).contains(&degrees) {
             return Err("Longitude degrees must be 0-180".to_string());
         }
 
-        if minutes < 0.0 || minutes >= 60.0 {
+        if !(0.0..60.0).contains(&minutes) {
             return Err("Minutes must be 0-60".to_string());
         }
 
@@ -803,7 +803,7 @@ fn render_visible_bodies(frame: &mut Frame, area: Rect, form: &TwilightForm) {
 
         // First-magnitude stars (mag ≤ 1.5) shown in CAPS, matching Pub 249 Vol.1 convention.
         // ◆ marker only for the best 3 recommended stars.
-        let is_first_magnitude = body.magnitude.map_or(false, |m| m <= 1.5);
+        let is_first_magnitude = body.magnitude.is_some_and(|m| m <= 1.5);
         let display_name = if is_first_magnitude {
             body.name.to_uppercase()
         } else {

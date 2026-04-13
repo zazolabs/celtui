@@ -77,17 +77,17 @@ pub fn average_sights(observations: &[SextantObservation]) -> Option<AveragedSig
 /// # Returns
 /// true if altitude is valid, false otherwise
 pub fn validate_altitude(degrees: f64, minutes: f64) -> bool {
-    if degrees < 0.0 || degrees > 90.0 {
+    if !(0.0..=90.0).contains(&degrees) {
         return false;
     }
 
-    if minutes < 0.0 || minutes >= 60.0 {
+    if !(0.0..60.0).contains(&minutes) {
         return false;
     }
 
     // Check if total altitude exceeds 90 degrees
     let total_degrees = degrees + (minutes / 60.0);
-    total_degrees >= 0.0 && total_degrees <= 90.0
+    (0.0..=90.0).contains(&total_degrees)
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+#![allow(clippy::upper_case_acronyms)]
 //! Sight reduction calculation screen
 //!
 //! This module provides a comprehensive form for celestial navigation sight reduction
@@ -307,6 +308,7 @@ impl CalculationForm {
     pub fn update_star_filter(&mut self) {
         self.star_filter_matches = self.filter_stars();
         // Reset selected index if it's out of bounds
+#[allow(clippy::if_same_then_else)]
         if self.star_filter_matches.is_empty() {
             self.star_selected_index = 0;
         } else if self.star_selected_index >= self.star_filter_matches.len() {
@@ -1197,6 +1199,7 @@ impl CalculationForm {
         }
 
         // Handle Star - validate star name is provided
+#[allow(clippy::collapsible_if)]
         if input.celestial_body == CelestialBody::Star {
             if self.star_name.trim().is_empty() {
                 return Err("Star name is required when 'Star' is selected".to_string());
@@ -1227,10 +1230,9 @@ impl CalculationForm {
         }
 
         // Handle Star - validate star name is provided
-        if input.celestial_body == CelestialBody::Star {
-            if self.star_name.trim().is_empty() {
+        if input.celestial_body == CelestialBody::Star &&
+            self.star_name.trim().is_empty() {
                 return Err("Star name is required when 'Star' is selected".to_string());
-            }
         }
 
         // Convert to almanac body type

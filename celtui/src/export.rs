@@ -4,6 +4,8 @@
 //! to various formats (text reports, CSV, JSON) for record-keeping and
 //! integration with other tools.
 
+#![allow(dead_code)]
+
 use crate::auto_compute_screen::{Sight, LopDisplayData};
 use celtnav::fix_calculation::Fix;
 use chrono::Local;
@@ -11,7 +13,7 @@ use std::fmt::Write as FmtWrite;
 
 /// Export format options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExportFormat {
+#[allow(dead_code)] pub enum ExportFormat {
     /// Plain text navigation log
     Text,
     /// Comma-separated values for spreadsheets
@@ -338,7 +340,7 @@ mod tests {
         let mut sight2 = create_test_sight();
         sight2.body = SightCelestialBody::Moon;
 
-        let csv = format_sight_csv(&vec![sight1, sight2]);
+        let csv = format_sight_csv(&[sight1, sight2]);
         let lines: Vec<&str> = csv.lines().collect();
 
         assert_eq!(lines.len(), 3); // header + 2 data rows

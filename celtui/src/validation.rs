@@ -1,7 +1,10 @@
+#![allow(unused)]
 //! Input validation helpers for celestial navigation forms
 //!
 //! Provides validation functions for coordinates, angles, dates, times,
 //! and other navigation-related inputs with detailed error messages.
+
+// #![cfg_attr(test, allow(dead_code))]
 
 use chrono::{Datelike, NaiveDate, NaiveTime};
 
@@ -69,7 +72,7 @@ pub fn validate_minutes(minutes_str: &str, name: &str) -> ValidationResult {
 
     match minutes_str.parse::<f64>() {
         Ok(min) => {
-            if min < 0.0 || min >= 60.0 {
+            if !(0.0..60.0).contains(&min) {
                 Err(format!("{} minutes must be between 0.0 and 59.999", name))
             } else {
                 Ok(())
@@ -80,14 +83,14 @@ pub fn validate_minutes(minutes_str: &str, name: &str) -> ValidationResult {
 }
 
 /// Validate seconds component of an angle (0-60 with one decimal place)
-pub fn validate_seconds(seconds_str: &str, name: &str) -> ValidationResult {
+#[allow(dead_code)] pub fn validate_seconds(seconds_str: &str, name: &str) -> ValidationResult {
     if seconds_str.is_empty() {
         return Ok(()); // Seconds can be optional, defaults to 0
     }
 
     match seconds_str.parse::<f64>() {
         Ok(sec) => {
-            if sec < 0.0 || sec >= 60.0 {
+            if !(0.0..60.0).contains(&sec) {
                 Err(format!("{} seconds must be between 0.0 and 59.9", name))
             } else {
                 Ok(())
@@ -154,7 +157,7 @@ pub fn validate_sextant_altitude_dms(hs_str: &str) -> ValidationResult {
 }
 
 /// Validate GHA in "DD MM.M" format
-pub fn validate_gha_dms(gha_str: &str) -> ValidationResult {
+#[allow(dead_code)] pub fn validate_gha_dms(gha_str: &str) -> ValidationResult {
     validate_dms_angle(gha_str, 0.0, 360.0, "GHA")
 }
 
@@ -174,7 +177,7 @@ pub fn validate_latitude(lat_str: &str) -> ValidationResult {
         return Err("Latitude is required".to_string());
     }
 
-    let parts: Vec<&str> = lat_str.trim().split_whitespace().collect();
+    let parts: Vec<&str> = lat_str.split_whitespace().collect();
     if parts.len() != 2 {
         return Err("Latitude must be in format: DD MM (e.g., 40 30)".to_string());
     }
@@ -191,7 +194,7 @@ pub fn validate_longitude(lon_str: &str) -> ValidationResult {
         return Err("Longitude is required".to_string());
     }
 
-    let parts: Vec<&str> = lon_str.trim().split_whitespace().collect();
+    let parts: Vec<&str> = lon_str.split_whitespace().collect();
     if parts.len() != 2 {
         return Err("Longitude must be in format: DDD MM (e.g., 070 15)".to_string());
     }
@@ -203,12 +206,12 @@ pub fn validate_longitude(lon_str: &str) -> ValidationResult {
 }
 
 /// Validate sextant altitude degrees (typically 0-90)
-pub fn validate_sextant_degrees(deg_str: &str) -> ValidationResult {
+#[allow(dead_code)] pub fn validate_sextant_degrees(deg_str: &str) -> ValidationResult {
     validate_degrees(deg_str, 0.0, 90.0, "Sextant altitude")
 }
 
 /// Validate sextant altitude minutes
-pub fn validate_sextant_minutes(min_str: &str) -> ValidationResult {
+#[allow(dead_code)] pub fn validate_sextant_minutes(min_str: &str) -> ValidationResult {
     validate_minutes(min_str, "Sextant altitude")
 }
 
@@ -220,7 +223,7 @@ pub fn validate_index_error(ie_str: &str) -> ValidationResult {
 
     match ie_str.parse::<f64>() {
         Ok(ie) => {
-            if ie < -30.0 || ie > 30.0 {
+            if !(-30.0..=30.0).contains(&ie) {
                 Err("Index error must be between -30 and +30 arcminutes".to_string())
             } else {
                 Ok(())
@@ -238,7 +241,7 @@ pub fn validate_height_of_eye(hoe_str: &str) -> ValidationResult {
 
     match hoe_str.parse::<f64>() {
         Ok(hoe) => {
-            if hoe < 0.0 || hoe > 500.0 {
+            if !(0.0..=500.0).contains(&hoe) {
                 Err("Height of eye must be between 0 and 500 meters".to_string())
             } else {
                 Ok(())
@@ -260,7 +263,7 @@ pub fn validate_direction(dir: char, valid_chars: &[char], name: &str) -> Valida
 
 /// Parse coordinate string "DD MM" to decimal degrees
 pub fn parse_coordinate(coord_str: &str) -> Result<f64, String> {
-    let parts: Vec<&str> = coord_str.trim().split_whitespace().collect();
+    let parts: Vec<&str> = coord_str.split_whitespace().collect();
     if parts.len() != 2 {
         return Err("Coordinate must be in format: DD MM".to_string());
     }
@@ -322,7 +325,7 @@ pub fn parse_dm(input: &str) -> Result<(f64, f64), String> {
             let minutes = parts[1].parse::<f64>()
                 .map_err(|_| "Invalid minutes value".to_string())?;
 
-            if minutes < 0.0 || minutes >= 60.0 {
+            if !(0.0..60.0).contains(&minutes) {
                 return Err("Minutes must be between 0.0 and 59.999".to_string());
             }
 
@@ -370,7 +373,7 @@ pub fn parse_dms(input: &str) -> Result<(f64, f64, f64), String> {
             let minutes = parts[1].parse::<f64>()
                 .map_err(|_| "Invalid minutes value".to_string())?;
 
-            if minutes < 0.0 || minutes >= 60.0 {
+            if !(0.0..60.0).contains(&minutes) {
                 return Err("Minutes must be between 0.0 and 59.999".to_string());
             }
 
@@ -391,10 +394,10 @@ pub fn parse_dms(input: &str) -> Result<(f64, f64, f64), String> {
             let seconds = parts[2].parse::<f64>()
                 .map_err(|_| "Invalid seconds value".to_string())?;
 
-            if minutes < 0.0 || minutes >= 60.0 {
+            if !(0.0..60.0).contains(&minutes) {
                 return Err("Minutes must be between 0 and 59.99".to_string());
             }
-            if seconds < 0.0 || seconds >= 60.0 {
+            if !(0.0..60.0).contains(&seconds) {
                 return Err("Seconds must be between 0.0 and 59.9".to_string());
             }
 
@@ -439,7 +442,7 @@ pub fn format_dm_input(degrees: f64, decimal_minutes: f64) -> String {
 ///
 /// # Returns
 /// String formatted as "DD MM.M" (converts to decimal minutes format)
-pub fn format_dms_input(degrees: f64, minutes: f64, seconds: f64) -> String {
+#[allow(dead_code)] pub fn format_dms_input(degrees: f64, minutes: f64, seconds: f64) -> String {
     // Convert to decimal minutes
     let decimal_minutes = minutes + (seconds / 60.0);
     format_dm_input(degrees, decimal_minutes)

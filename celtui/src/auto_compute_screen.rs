@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code))]
+
 //! Auto Compute screen for multiple sight reduction and fix calculation
 //!
 //! This module provides a screen for entering multiple celestial sights,
@@ -503,9 +505,8 @@ impl AutoComputeForm {
     pub fn update_star_filter(&mut self) {
         self.star_filter_matches = self.filter_stars();
         // Reset selected index if it's out of bounds
-        if self.star_filter_matches.is_empty() {
-            self.star_selected_index = 0;
-        } else if self.star_selected_index >= self.star_filter_matches.len() {
+        if self.star_filter_matches.is_empty() ||
+            self.star_selected_index >= self.star_filter_matches.len() {
             self.star_selected_index = 0;
         }
     }
@@ -622,7 +623,7 @@ impl AutoComputeForm {
                     Ok(())
                 } else {
                     match self.current_sight.heading.parse::<f64>() {
-                        Ok(heading) if heading >= 0.0 && heading < 360.0 => Ok(()),
+                        Ok(heading) if (0.0..360.0).contains(&heading) => Ok(()),
                         Ok(_) => Err("Heading must be 0-360 degrees".to_string()),
                         Err(_) => Err("Heading must be a number".to_string()),
                     }
@@ -1089,19 +1090,6 @@ impl AutoComputeForm {
         }
     }
 
-    fn compute_lop_with_time(&self, sight: &Sight) -> Result<(LineOfPosition, chrono::DateTime<Utc>), String> {
-        // Parse date and time
-        let date = NaiveDate::parse_from_str(&sight.date, "%Y-%m-%d")
-            .map_err(|_| "Invalid date format".to_string())?;
-        let time = NaiveTime::parse_from_str(&sight.time, "%H:%M:%S")
-            .or_else(|_| NaiveTime::parse_from_str(&sight.time, "%H:%M"))
-            .map_err(|_| "Invalid time format".to_string())?;
-        let datetime = Utc.from_utc_datetime(&date.and_time(time));
-
-        let lop = self.compute_lop(sight)?;
-        Ok((lop, datetime))
-    }
-
     fn compute_lop_with_display_data(&self, sight: &Sight) -> Result<(LineOfPosition, chrono::DateTime<Utc>, LopDisplayData), String> {
         use crate::validation::parse_dms;
 
@@ -1253,7 +1241,7 @@ impl AutoComputeForm {
         Ok((lop, datetime, display_data))
     }
 
-    fn compute_lop(&self, sight: &Sight) -> Result<LineOfPosition, String> {
+#[allow(dead_code)]    fn compute_lop(&self, sight: &Sight) -> Result<LineOfPosition, String> {
         use crate::validation::parse_dms;
 
         // Parse date and time
@@ -1424,6 +1412,7 @@ impl AutoComputeForm {
                 }
             }
             KeyCode::Enter => {
+#[allow(clippy::single_match)]
                 match self.mode {
                     AutoComputeMode::EnteringSight => {
                         // If on StarName field, select current highlighted star
@@ -1536,6 +1525,7 @@ impl AutoComputeForm {
                 }
             }
             KeyCode::Left => {
+#[allow(clippy::single_match)]
                 match self.mode {
                     AutoComputeMode::EnteringSight => {
                         // Left arrow cycles selection fields backward (same as '-')
@@ -1557,6 +1547,7 @@ impl AutoComputeForm {
                 }
             }
             KeyCode::Right => {
+#[allow(clippy::single_match)]
                 match self.mode {
                     AutoComputeMode::EnteringSight => {
                         // Right arrow cycles selection fields forward (same as '+')
@@ -1739,6 +1730,7 @@ fn render_input_form(frame: &mut Frame, area: Rect, form: &AutoComputeForm) {
         };
 
         // Change value color based on validation
+        #[allow(clippy::collapsible_else_if)]
         let value_style = if is_current {
             if validation_error.is_some() {
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
@@ -2084,7 +2076,7 @@ fn render_lop_pane(frame: &mut Frame, area: Rect, lop_data: &[LopDisplayData]) {
         .split(area);
 
     // Split LOPs into two halves
-    let mid = (lop_data.len() + 1) / 2;
+    let mid = lop_data.len().div_ceil(2);
     let left_lops = &lop_data[..mid];
     let right_lops = &lop_data[mid..];
 
@@ -2963,7 +2955,7 @@ mod tests {
         let mut form = AutoComputeForm::new();
         form.current_sight.body = SightCelestialBody::Star("sir".to_string());
         form.update_star_filter();
-        assert!(form.star_filter_matches.len() > 0);
+        assert!(!form.star_filter_matches.is_empty());
         assert!(form.star_filter_matches.contains(&"Sirius".to_string()));
     }
 
@@ -3005,7 +2997,7 @@ mod tests {
 
     #[test]
     fn test_compute_lop_with_star() {
-        let mut form = AutoComputeForm::new();
+        let form = AutoComputeForm::new();
         let mut sight = Sight::new();
         sight.body = SightCelestialBody::Star("Sirius".to_string());
         sight.date = "2024-01-15".to_string();
@@ -3130,7 +3122,7 @@ mod tests {
     #[test]
     fn test_integration_complete_star_sight_reduction() {
         // Test complete sight reduction with Sirius at known position/time
-        let mut form = AutoComputeForm::new();
+        let form = AutoComputeForm::new();
         let mut sight = Sight::new();
 
         // Using Sirius from known position on 2024-01-15 at 20:00:00 UT
@@ -3162,7 +3154,7 @@ mod tests {
     #[test]
     fn test_integration_almanac_lookup_multiple_stars() {
         // Test almanac lookup with different stars
-        let mut form = AutoComputeForm::new();
+        let form = AutoComputeForm::new();
         let test_stars = vec!["Sirius", "Arcturus", "Vega", "Polaris", "Betelgeuse"];
 
         for star_name in test_stars {
@@ -3323,7 +3315,7 @@ mod tests {
 
     #[test]
     fn test_integration_star_field_visibility() {
-        let form = AutoComputeForm::new();
+        let _form = AutoComputeForm::new();
 
         // StarName field should be in the all() list
         let fields = SightInputField::all();
@@ -4154,7 +4146,7 @@ mod tests {
             azimuth: 125.0,
         }).collect();
 
-        let mid = (lop_data.len() + 1) / 2;
+        let mid = lop_data.len().div_ceil(2);
         let left_lops = &lop_data[..mid];
         let right_lops = &lop_data[mid..];
 
@@ -4184,7 +4176,7 @@ mod tests {
             azimuth: 125.0,
         }).collect();
 
-        let mid = (lop_data.len() + 1) / 2;
+        let mid = lop_data.len().div_ceil(2);
         let left_lops = &lop_data[..mid];
         let right_lops = &lop_data[mid..];
 
@@ -4214,7 +4206,7 @@ mod tests {
             azimuth: 125.0,
         }];
 
-        let mid = (lop_data.len() + 1) / 2;
+        let mid = lop_data.len().div_ceil(2);
         let left_lops = &lop_data[..mid];
         let right_lops = &lop_data[mid..];
 
@@ -4320,7 +4312,7 @@ mod tests {
         ];
 
         for (gha, chosen_lon, expected_lha) in test_cases {
-            let lop = LopDisplayData {
+            let _lop = LopDisplayData {
                 body_name: "Test".to_string(),
                 chosen_lat: 45.0,
                 chosen_lon,

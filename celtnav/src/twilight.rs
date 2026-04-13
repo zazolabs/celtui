@@ -126,7 +126,7 @@ fn find_sun_altitude_time(
     let mut prev_alt = sun_altitude_at_time(current_time, latitude, longitude);
 
     while current_time < end_time {
-        current_time = current_time + Duration::minutes(time_step_minutes);
+        current_time += Duration::minutes(time_step_minutes);
         let current_alt = sun_altitude_at_time(current_time, latitude, longitude);
 
         // Check if we crossed the target altitude
@@ -309,7 +309,7 @@ pub fn get_visible_stars(
             let altitude_apparent = altitude_geometric - refraction; // refraction < 0, so this adds it
 
             // Include only stars in good sextant range (using apparent altitude)
-            if altitude_apparent >= MIN_SEXTANT_ALTITUDE && altitude_apparent <= MAX_SEXTANT_ALTITUDE {
+            if (MIN_SEXTANT_ALTITUDE..=MAX_SEXTANT_ALTITUDE).contains(&altitude_apparent) {
                 visible_stars.push(VisibleBody {
                     name: star_name.to_string(),
                     altitude: altitude_apparent, // Store apparent altitude for display
@@ -364,7 +364,7 @@ pub fn get_visible_planets(
         let altitude_apparent = altitude_geometric - refraction; // refraction < 0, so this adds it
 
         // Include only planets in good sextant range (using apparent altitude)
-        if altitude_apparent >= MIN_SEXTANT_ALTITUDE && altitude_apparent <= MAX_SEXTANT_ALTITUDE {
+        if (MIN_SEXTANT_ALTITUDE..=MAX_SEXTANT_ALTITUDE).contains(&altitude_apparent) {
             let name = match planet {
                 Planet::Venus => "Venus",
                 Planet::Mars => "Mars",
@@ -426,7 +426,7 @@ fn select_best_stars_for_lop(stars: &[VisibleBody], is_morning: bool, band_mode:
     }
 
     // Try to select 3 stars from optimal range first
-    let selected = if optimal_stars.len() >= 3 {
+    if optimal_stars.len() >= 3 {
         select_three_stars_from_pool(stars, &optimal_stars, is_morning, band_mode)
     } else if optimal_stars.is_empty() && extended_stars.len() >= 3 {
         select_three_stars_from_pool(stars, &extended_stars, is_morning, band_mode)
@@ -438,9 +438,7 @@ fn select_best_stars_for_lop(stars: &[VisibleBody], is_morning: bool, band_mode:
             selected.append(&mut extended_selected);
         }
         selected
-    };
-
-    selected
+    }
 }
 
 /// Select up to N stars from a pool, optimizing for azimuth distribution and brightness
@@ -460,23 +458,23 @@ fn select_stars_from_pool(stars: &[VisibleBody], pool: &[usize], count: usize, i
 fn evaluate_altitude_quality(altitude: f64) -> f64 {
     // Sweet spot is 40-50° - ideal mid-range for accurate sextant observation
     // Gradual falloff outside this range
-    if altitude >= 40.0 && altitude <= 50.0 {
+    if (40.0..=50.0).contains(&altitude) {
         1.0 // Perfect mid-range
-    } else if altitude >= 35.0 && altitude < 40.0 {
+    } else if (35.0..40.0).contains(&altitude) {
         0.96 + (altitude - 35.0) / 5.0 * 0.04 // 35°=0.96, 40°=1.0
     } else if altitude > 50.0 && altitude <= 55.0 {
         0.96 + (55.0 - altitude) / 5.0 * 0.04 // 50°=1.0, 55°=0.96
-    } else if altitude >= 30.0 && altitude < 35.0 {
+    } else if (30.0..35.0).contains(&altitude) {
         0.90 + (altitude - 30.0) / 5.0 * 0.06 // 30°=0.90, 35°=0.96
     } else if altitude > 55.0 && altitude <= 58.0 {
         0.90 + (58.0 - altitude) / 3.0 * 0.06 // 55°=0.96, 58°=0.90
-    } else if altitude >= 25.0 && altitude < 30.0 {
+    } else if (25.0..30.0).contains(&altitude) {
         0.83 + (altitude - 25.0) / 5.0 * 0.07 // 25°=0.83, 30°=0.90
-    } else if altitude >= 20.0 && altitude < 25.0 {
+    } else if (20.0..25.0).contains(&altitude) {
         0.75 + (altitude - 20.0) / 5.0 * 0.08 // 20°=0.75, 25°=0.83
     } else if altitude > 58.0 && altitude <= 60.0 {
         0.80 - (altitude - 58.0) / 2.0 * 0.10 // 58°=0.90, 60°=0.70
-    } else if altitude >= 18.0 && altitude < 20.0 {
+    } else if (18.0..20.0).contains(&altitude) {
         0.68 + (altitude - 18.0) / 2.0 * 0.07 // 18°=0.68, 20°=0.75
     } else {
         0.50 // Poor
@@ -563,7 +561,7 @@ fn altitude_preference_score(altitude: f64) -> f64 {
 /// 3. Two-pass geometry/brightness selection:
 ///    Pass 1: find the global best azimuth geometry score across all valid combinations.
 ///    Pass 2: among all combinations within GEOMETRY_THRESHOLD of the best geometry,
-///            choose the one with the lowest average magnitude (brightest).
+///    choose the one with the lowest average magnitude (brightest).
 fn select_three_stars_from_pool(stars: &[VisibleBody], pool: &[usize], is_morning: bool, band_mode: bool) -> Vec<usize> {
     if pool.len() < 3 {
         return pool.to_vec();
@@ -577,9 +575,9 @@ fn select_three_stars_from_pool(stars: &[VisibleBody], pool: &[usize], is_mornin
     // magnitude bright enough to observe (faintest Pub 249 star is ~2.43).
     let acceptable_stars: Vec<usize> = pool.iter()
         .filter(|&&idx| {
-            let mag_ok = stars[idx].magnitude.map_or(true, |mag| mag <= 2.5);
+            let mag_ok = stars[idx].magnitude.is_none_or(|mag| mag <= 2.5);
             let alt = stars[idx].altitude;
-            let alt_ok = alt >= OPTIMAL_MIN_ALTITUDE && alt <= OPTIMAL_MAX_ALTITUDE;
+            let alt_ok = (OPTIMAL_MIN_ALTITUDE..=OPTIMAL_MAX_ALTITUDE).contains(&alt);
             let catalog_ok = !NON_STANDARD_STARS.contains(&stars[idx].name.as_str());
             mag_ok && alt_ok && catalog_ok
         })
@@ -734,7 +732,7 @@ fn select_second_best_stars(stars: &[VisibleBody], best_indices: &[usize]) -> Ve
     // Pool: acceptable stars not already in the best set
     let mut available: Vec<usize> = (0..stars.len())
         .filter(|&idx| {
-            let mag_ok = stars[idx].magnitude.map_or(false, |m| m <= 2.5);
+            let mag_ok = stars[idx].magnitude.is_some_and(|m| m <= 2.5);
             let alt_ok = stars[idx].altitude >= OPTIMAL_MIN_ALTITUDE
                 && stars[idx].altitude <= OPTIMAL_MAX_ALTITUDE;
             let catalog_ok = !NON_STANDARD_STARS.contains(&stars[idx].name.as_str());
@@ -904,7 +902,7 @@ fn select_three_stars_sequential(stars: &[VisibleBody], pool: &[usize]) -> Vec<u
         let azimuth_diff = azimuth_diff.min(360.0 - azimuth_diff);
 
         // Azimuth score - prefer 90-150° separation, ideal ~120°
-        let azimuth_score = if azimuth_diff >= 90.0 && azimuth_diff <= 150.0 {
+        let azimuth_score = if (90.0..=150.0).contains(&azimuth_diff) {
             azimuth_diff / 120.0
         } else if azimuth_diff < 90.0 {
             azimuth_diff / 90.0 * 0.5
@@ -1002,7 +1000,7 @@ pub fn get_all_visible_bodies_interval(
         let bodies = get_all_visible_bodies_single(*time, latitude, longitude);
         for body in bodies {
             body_visibility.entry(body.name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(body);
         }
     }

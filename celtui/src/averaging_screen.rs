@@ -299,7 +299,7 @@ impl AveragingForm {
     }
 
     /// Get the averaged sight (if available and exportable)
-    pub fn get_averaged_sight(&self) -> Option<&AveragedSight> {
+#[allow(dead_code)]    pub fn get_averaged_sight(&self) -> Option<&AveragedSight> {
         self.averaged_sight.as_ref()
     }
 }

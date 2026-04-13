@@ -114,7 +114,7 @@ pub mod pub229_test_data {
     ///
     /// Testing with rounded values: Lat 45°N, Dec 28°N, LHA 220°
     /// Expected: Hc ≈ 46°, Zn ≈ 258° (roughly southwest)
-    pub fn test_case_pollux_like() -> (EquatorialCoords, f64, f64, f64) {
+#[allow(dead_code)] pub fn test_case_pollux_like() -> (EquatorialCoords, f64, f64, f64) {
         let eq = EquatorialCoords {
             declination: 28.0,
             hour_angle: 220.0,

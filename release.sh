@@ -40,7 +40,7 @@ CARGO_TOML="./Cargo.toml"
 # Helpers
 # ---------------------------------------------------------------------------
 
-die() { echo "ERROR: $*" >&2; exit 1; }
+die() { echo -e "ERROR: $*" >&2; exit 1; }
 
 print_help() {
     # Print lines between the first and second '# ===...' delimiters,

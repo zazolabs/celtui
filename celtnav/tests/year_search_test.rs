@@ -12,7 +12,7 @@ fn search_year_for_correct_gha_aries() {
     println!("{:-<6}-+-{:-<12}-+-{:-<18}-+-{:-<15}", "", "", "", "");
 
     let target_gha_aries = 86.055;
-    let sha_pollux = 243.435; // SHA Pollux = 243° 26.1'
+    let _sha_pollux = 243.435; // SHA Pollux = 243° 26.1'
 
     let mut best_year = 0;
     let mut best_diff = f64::MAX;

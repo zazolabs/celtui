@@ -63,7 +63,7 @@ pub fn fix_from_two_lops(lop1: &LineOfPosition, lop2: &LineOfPosition) -> Option
     };
 
     // If lines are within 10 degrees of parallel, no reliable fix
-    if azimuth_diff_normalized < 10.0 || azimuth_diff_normalized > 170.0 {
+    if !(10.0..=170.0).contains(&azimuth_diff_normalized) {
         return None;
     }
 

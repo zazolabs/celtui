@@ -413,7 +413,7 @@ fn test_azimuth_range_validity() {
         };
         let zn = compute_azimuth(&sight_data);
 
-        assert!(zn >= 0.0 && zn < 360.0,
+        assert!((0.0..360.0).contains(&zn),
                 "Azimuth must be in range [0, 360), got {} for lat={}, dec={}, lha={}",
                 zn, lat, dec, lha);
     }
@@ -535,6 +535,6 @@ fn test_optimize_chosen_position_example_from_requirements() {
     assert_relative_eq!(lha.round(), lha, epsilon = 0.01);
 
     // Should be close to 122° or 123°
-    assert!(lha >= 121.5 && lha <= 123.5,
+    assert!((121.5..=123.5).contains(&lha),
            "LHA should be close to 122° or 123°, got {}", lha);
 }

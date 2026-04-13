@@ -3,7 +3,7 @@
 //! These tests verify the conversion between decimal degrees and DM format
 //! with decimal minutes precision.
 
-use celtnav::dms::{decimal_to_dms, dms_to_decimal, dm_to_decimal, DMS};
+use celtnav::dms::{decimal_to_dms, dm_to_decimal, DMS};
 use approx::assert_relative_eq;
 
 #[test]
@@ -177,7 +177,7 @@ fn test_edge_case_59_minutes_high() {
 fn test_latitude_range_north() {
     // 40° 26.767' N (New York) - 46.0" = 0.767'
     let decimal = dm_to_decimal(40, 26.767);
-    assert!(decimal >= 0.0 && decimal <= 90.0);
+    assert!((0.0..=90.0).contains(&decimal));
     assert_relative_eq!(decimal, 40.446111, epsilon = 1e-5);
 }
 
@@ -185,7 +185,7 @@ fn test_latitude_range_north() {
 fn test_latitude_range_south() {
     // -33° 51.417' S (Sydney) - 25.0" = 0.417'
     let decimal = dm_to_decimal(-33, 51.417);
-    assert!(decimal >= -90.0 && decimal <= 0.0);
+    assert!((-90.0..=0.0).contains(&decimal));
     assert_relative_eq!(decimal, -33.856944, epsilon = 1e-5);
 }
 
@@ -193,7 +193,7 @@ fn test_latitude_range_south() {
 fn test_longitude_range_east() {
     // 151° 12.433' E (Sydney) - 26.0" = 0.433'
     let decimal = dm_to_decimal(151, 12.433);
-    assert!(decimal >= 0.0 && decimal <= 180.0);
+    assert!((0.0..=180.0).contains(&decimal));
     assert_relative_eq!(decimal, 151.207222, epsilon = 1e-5);
 }
 
@@ -201,7 +201,7 @@ fn test_longitude_range_east() {
 fn test_longitude_range_west() {
     // -74° 0.383' W (New York) - 23.0" = 0.383'
     let decimal = dm_to_decimal(-74, 0.383);
-    assert!(decimal >= -180.0 && decimal <= 0.0);
+    assert!((-180.0..=0.0).contains(&decimal));
     assert_relative_eq!(decimal, -74.006389, epsilon = 1e-5);
 }
 

@@ -1,6 +1,5 @@
 //! Test the move_position function to ensure it's working correctly
 
-use celtnav::fix_calculation::LineOfPosition;
 use celtnav::dms_to_decimal;
 
 // We can't directly test move_position since it's private, but we can test

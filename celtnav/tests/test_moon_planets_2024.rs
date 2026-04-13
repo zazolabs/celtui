@@ -30,7 +30,7 @@ fn test_moon_gha_march_2024() {
 
     // Verify it's in valid range
     assert!(
-        gha >= 0.0 && gha < 360.0,
+        (0.0..360.0).contains(&gha),
         "Moon GHA must be in range [0, 360), got {:.2}°",
         gha
     );
@@ -57,7 +57,7 @@ fn test_moon_declination_march_2024() {
 
     // Verify it's in valid range
     assert!(
-        dec >= -29.0 && dec <= 29.0,
+        (-29.0..=29.0).contains(&dec),
         "Moon declination must be in range [-28.5, +28.5], got {:.2}°",
         dec
     );
@@ -129,13 +129,13 @@ fn test_venus_position_march_2024() {
 
     // Verify in valid ranges
     assert!(
-        gha >= 0.0 && gha < 360.0,
+        (0.0..360.0).contains(&gha),
         "Venus GHA must be in range [0, 360), got {:.2}°",
         gha
     );
 
     assert!(
-        dec >= -30.0 && dec <= 30.0,
+        (-30.0..=30.0).contains(&dec),
         "Venus declination should be within ~±28° (ecliptic range), got {:.2}°",
         dec
     );
@@ -153,8 +153,8 @@ fn test_mars_position_march_2024() {
     println!("GHA: {:.2}°", gha);
     println!("Dec: {:.2}°", dec);
 
-    assert!(gha >= 0.0 && gha < 360.0, "Mars GHA out of range");
-    assert!(dec >= -30.0 && dec <= 30.0, "Mars declination out of range");
+    assert!((0.0..360.0).contains(&gha), "Mars GHA out of range");
+    assert!((-30.0..=30.0).contains(&dec), "Mars declination out of range");
 }
 
 /// Test Jupiter position for 2024-03-15
@@ -169,8 +169,8 @@ fn test_jupiter_position_march_2024() {
     println!("GHA: {:.2}°", gha);
     println!("Dec: {:.2}°", dec);
 
-    assert!(gha >= 0.0 && gha < 360.0, "Jupiter GHA out of range");
-    assert!(dec >= -30.0 && dec <= 30.0, "Jupiter declination out of range");
+    assert!((0.0..360.0).contains(&gha), "Jupiter GHA out of range");
+    assert!((-30.0..=30.0).contains(&dec), "Jupiter declination out of range");
 }
 
 /// Test Saturn position for 2024-03-15
@@ -185,8 +185,8 @@ fn test_saturn_position_march_2024() {
     println!("GHA: {:.2}°", gha);
     println!("Dec: {:.2}°", dec);
 
-    assert!(gha >= 0.0 && gha < 360.0, "Saturn GHA out of range");
-    assert!(dec >= -30.0 && dec <= 30.0, "Saturn declination out of range");
+    assert!((0.0..360.0).contains(&gha), "Saturn GHA out of range");
+    assert!((-30.0..=30.0).contains(&dec), "Saturn declination out of range");
 }
 
 /// Test that all planets have different positions
