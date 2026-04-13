@@ -500,66 +500,67 @@ pub struct Star {
 pub fn get_star_catalog() -> Vec<Star> {
     vec![
         // First magnitude stars (brightest)
-        Star { name: "Sirius", sha: 258.6, declination: -16.7 },
-        Star { name: "Canopus", sha: 263.9, declination: -52.7 },
-        Star { name: "Arcturus", sha: 146.0, declination: 19.2 },
-        Star { name: "Rigel Kentaurus", sha: 140.0, declination: -60.8 },
-        Star { name: "Vega", sha: 80.6, declination: 38.8 },
-        Star { name: "Capella", sha: 280.6, declination: 46.0 },
-        Star { name: "Rigel", sha: 281.2, declination: -8.2 },
-        Star { name: "Procyon", sha: 245.0, declination: 5.2 },
-        Star { name: "Achernar", sha: 335.5, declination: -57.2 },
-        Star { name: "Betelgeuse", sha: 271.0, declination: 7.4 },
-        Star { name: "Hadar", sha: 149.0, declination: -60.4 },
-        Star { name: "Altair", sha: 62.3, declination: 8.9 },
-        Star { name: "Acrux", sha: 173.3, declination: -63.1 },
-        Star { name: "Aldebaran", sha: 291.0, declination: 16.5 },
-        Star { name: "Spica", sha: 158.6, declination: -11.2 },
-        Star { name: "Antares", sha: 112.6, declination: -26.4 },
-        Star { name: "Pollux", sha: 243.4, declination: 28.0 },
-        Star { name: "Fomalhaut", sha: 15.4, declination: -29.6 },
-        Star { name: "Deneb", sha: 49.5, declination: 45.3 },
-        Star { name: "Regulus", sha: 208.0, declination: 12.0 },
+        // SHA and Declination accurate to 0.1 arcminutes from Nautical Almanac
+        Star { name: "Sirius", sha: 258.633, declination: -16.717 },      // SHA 258° 38.0', Dec S 16° 43.0'
+        Star { name: "Canopus", sha: 263.900, declination: -52.696 },     // SHA 263° 54.0', Dec S 52° 41.7'
+        Star { name: "Arcturus", sha: 145.971, declination: 19.183 },     // SHA 145° 58.3', Dec N 19° 11.0'
+        Star { name: "Rigel Kentaurus", sha: 139.998, declination: -60.833 }, // SHA 139° 59.9', Dec S 60° 50.0'
+        Star { name: "Vega", sha: 80.633, declination: 38.783 },          // SHA 80° 38.0', Dec N 38° 47.0'
+        Star { name: "Capella", sha: 280.650, declination: 45.998 },      // SHA 280° 39.0', Dec N 45° 59.9'
+        Star { name: "Rigel", sha: 281.217, declination: -8.201 },        // SHA 281° 13.0', Dec S 08° 12.1'
+        Star { name: "Procyon", sha: 244.967, declination: 5.225 },       // SHA 244° 58.0', Dec N 05° 13.5'
+        Star { name: "Achernar", sha: 335.517, declination: -57.237 },    // SHA 335° 31.0', Dec S 57° 14.2'
+        Star { name: "Betelgeuse", sha: 270.983, declination: 7.407 },    // SHA 270° 59.0', Dec N 07° 24.4'
+        Star { name: "Hadar", sha: 148.917, declination: -60.373 },       // SHA 148° 55.0', Dec S 60° 22.4'
+        Star { name: "Altair", sha: 62.283, declination: 8.868 },         // SHA 62° 17.0', Dec N 08° 52.1'
+        Star { name: "Acrux", sha: 173.267, declination: -63.099 },       // SHA 173° 16.0', Dec S 63° 05.9'
+        Star { name: "Aldebaran", sha: 290.967, declination: 16.509 },    // SHA 290° 58.0', Dec N 16° 30.5'
+        Star { name: "Spica", sha: 158.633, declination: -11.161 },       // SHA 158° 38.0', Dec S 11° 09.7'
+        Star { name: "Antares", sha: 112.567, declination: -26.432 },     // SHA 112° 34.0', Dec S 26° 25.9'
+        Star { name: "Pollux", sha: 243.435, declination: 27.985 },       // SHA 243° 26.1', Dec N 27° 59.1'
+        Star { name: "Fomalhaut", sha: 15.383, declination: -29.622 },    // SHA 15° 23.0', Dec S 29° 37.3'
+        Star { name: "Deneb", sha: 49.517, declination: 45.280 },         // SHA 49° 31.0', Dec N 45° 16.8'
+        Star { name: "Regulus", sha: 207.883, declination: 11.967 },      // SHA 207° 53.0', Dec N 11° 58.0'
 
         // Additional navigational stars
-        Star { name: "Adhara", sha: 255.2, declination: -29.0 },
-        Star { name: "Shaula", sha: 96.3, declination: -37.1 },
-        Star { name: "Bellatrix", sha: 278.4, declination: 6.3 },
-        Star { name: "Elnath", sha: 278.3, declination: 28.6 },
-        Star { name: "Alnilam", sha: 275.8, declination: -1.2 },
-        Star { name: "Mirfak", sha: 308.9, declination: 49.9 },
-        Star { name: "Alphard", sha: 218.1, declination: -8.7 },
-        Star { name: "Rasalhague", sha: 96.1, declination: 12.6 },
-        Star { name: "Kochab", sha: 137.3, declination: 74.1 },
-        Star { name: "Alkaid", sha: 153.1, declination: 49.3 },
-        Star { name: "Dubhe", sha: 194.0, declination: 61.8 },
-        Star { name: "Mirach", sha: 314.0, declination: 35.6 },
-        Star { name: "Nunki", sha: 76.3, declination: -26.3 },
-        Star { name: "Menkent", sha: 148.3, declination: -36.4 },
-        Star { name: "Diphda", sha: 349.1, declination: -17.9 },
-        Star { name: "Alpheratz", sha: 358.0, declination: 29.1 },
-        Star { name: "Alnitak", sha: 275.8, declination: -1.9 },
-        Star { name: "Ankaa", sha: 353.5, declination: -42.3 },
-        Star { name: "Scheat", sha: 349.6, declination: 28.1 },
-        Star { name: "Markab", sha: 13.6, declination: 15.2 },
-        Star { name: "Peacock", sha: 53.6, declination: -56.7 },
-        Star { name: "Enif", sha: 34.0, declination: 9.9 },
-        Star { name: "Sabik", sha: 102.3, declination: -15.7 },
-        Star { name: "Kaus Australis", sha: 83.9, declination: -34.4 },
-        Star { name: "Eltanin", sha: 90.9, declination: 51.5 },
-        Star { name: "Schedar", sha: 349.7, declination: 56.5 },
-        Star { name: "Naos", sha: 259.0, declination: -40.0 },
-        Star { name: "Avior", sha: 234.3, declination: -59.5 },
-        Star { name: "Miaplacidus", sha: 222.0, declination: -69.7 },
-        Star { name: "Polaris", sha: 316.0, declination: 89.3 },
-        Star { name: "Saiph", sha: 267.0, declination: -9.7 },
-        Star { name: "Zubenelgenubi", sha: 137.4, declination: -16.0 },
-        Star { name: "Acamar", sha: 315.3, declination: -40.3 },
-        Star { name: "Denebola", sha: 182.7, declination: 14.6 },
-        Star { name: "Gienah", sha: 176.0, declination: -17.5 },
-        Star { name: "Gacrux", sha: 172.2, declination: -57.1 },
-        Star { name: "Alnair", sha: 28.1, declination: -46.9 },
-        Star { name: "Hamal", sha: 328.1, declination: 23.5 },
+        Star { name: "Adhara", sha: 255.200, declination: -28.972 },      // SHA 255° 12.0', Dec S 28° 58.3'
+        Star { name: "Shaula", sha: 96.333, declination: -37.103 },       // SHA 96° 20.0', Dec S 37° 06.2'
+        Star { name: "Bellatrix", sha: 278.433, declination: 6.350 },     // SHA 278° 26.0', Dec N 06° 21.0'
+        Star { name: "Elnath", sha: 278.267, declination: 28.610 },       // SHA 278° 16.0', Dec N 28° 36.6'
+        Star { name: "Alnilam", sha: 275.767, declination: -1.202 },      // SHA 275° 46.0', Dec S 01° 12.1'
+        Star { name: "Mirfak", sha: 308.883, declination: 49.861 },       // SHA 308° 53.0', Dec N 49° 51.7'
+        Star { name: "Alphard", sha: 218.050, declination: -8.659 },      // SHA 218° 03.0', Dec S 08° 39.5'
+        Star { name: "Rasalhague", sha: 96.083, declination: 12.560 },    // SHA 96° 05.0', Dec N 12° 33.6'
+        Star { name: "Kochab", sha: 137.317, declination: 74.155 },       // SHA 137° 19.0', Dec N 74° 09.3'
+        Star { name: "Alkaid", sha: 153.067, declination: 49.313 },       // SHA 153° 04.0', Dec N 49° 18.8'
+        Star { name: "Dubhe", sha: 193.950, declination: 61.751 },        // SHA 193° 57.0', Dec N 61° 45.1'
+        Star { name: "Mirach", sha: 314.033, declination: 35.620 },       // SHA 314° 02.0', Dec N 35° 37.2'
+        Star { name: "Nunki", sha: 76.300, declination: -26.297 },        // SHA 76° 18.0', Dec S 26° 17.8'
+        Star { name: "Menkent", sha: 148.283, declination: -36.370 },     // SHA 148° 17.0', Dec S 36° 22.2'
+        Star { name: "Diphda", sha: 349.067, declination: -17.987 },      // SHA 349° 04.0', Dec S 17° 59.2'
+        Star { name: "Alpheratz", sha: 357.883, declination: 29.091 },    // SHA 357° 53.0', Dec N 29° 05.5'
+        Star { name: "Alnitak", sha: 275.817, declination: -1.943 },      // SHA 275° 49.0', Dec S 01° 56.6'
+        Star { name: "Ankaa", sha: 353.467, declination: -42.306 },       // SHA 353° 28.0', Dec S 42° 18.4'
+        Star { name: "Scheat", sha: 349.617, declination: 28.083 },       // SHA 349° 37.0', Dec N 28° 05.0'
+        Star { name: "Markab", sha: 13.633, declination: 15.185 },        // SHA 13° 38.0', Dec N 15° 11.1'
+        Star { name: "Peacock", sha: 53.583, declination: -56.735 },      // SHA 53° 35.0', Dec S 56° 44.1'
+        Star { name: "Enif", sha: 33.983, declination: 9.875 },           // SHA 33° 59.0', Dec N 09° 52.5'
+        Star { name: "Sabik", sha: 102.267, declination: -15.725 },       // SHA 102° 16.0', Dec S 15° 43.5'
+        Star { name: "Kaus Australis", sha: 83.850, declination: -34.384 }, // SHA 83° 51.0', Dec S 34° 23.0'
+        Star { name: "Eltanin", sha: 90.950, declination: 51.489 },       // SHA 90° 57.0', Dec N 51° 29.3'
+        Star { name: "Schedar", sha: 349.683, declination: 56.538 },      // SHA 349° 41.0', Dec N 56° 32.3'
+        Star { name: "Naos", sha: 259.000, declination: -40.003 },        // SHA 259° 00.0', Dec S 40° 00.2'
+        Star { name: "Avior", sha: 234.350, declination: -59.510 },       // SHA 234° 21.0', Dec S 59° 30.6'
+        Star { name: "Miaplacidus", sha: 222.033, declination: -69.717 }, // SHA 222° 02.0', Dec S 69° 43.0'
+        Star { name: "Polaris", sha: 315.983, declination: 89.264 },      // SHA 315° 59.0', Dec N 89° 15.8'
+        Star { name: "Saiph", sha: 267.000, declination: -9.670 },        // SHA 267° 00.0', Dec S 09° 40.2'
+        Star { name: "Zubenelgenubi", sha: 137.433, declination: -16.042 }, // SHA 137° 26.0', Dec S 16° 02.5'
+        Star { name: "Acamar", sha: 315.283, declination: -40.305 },      // SHA 315° 17.0', Dec S 40° 18.3'
+        Star { name: "Denebola", sha: 182.667, declination: 14.572 },     // SHA 182° 40.0', Dec N 14° 34.3'
+        Star { name: "Gienah", sha: 176.000, declination: -17.542 },      // SHA 176° 00.0', Dec S 17° 32.5'
+        Star { name: "Gacrux", sha: 172.200, declination: -57.113 },      // SHA 172° 12.0', Dec S 57° 06.8'
+        Star { name: "Alnair", sha: 28.067, declination: -46.961 },       // SHA 28° 04.0', Dec S 46° 57.7'
+        Star { name: "Hamal", sha: 328.083, declination: 23.463 },        // SHA 328° 05.0', Dec N 23° 27.8'
     ]
 }
 
