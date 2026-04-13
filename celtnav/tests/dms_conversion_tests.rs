@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Tests for DMS (Degrees, Decimal Minutes) coordinate conversion
 //!
 //! These tests verify the conversion between decimal degrees and DM format

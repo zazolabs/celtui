@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Application state and event handling
 //!
 //! This module defines the core application structure, state management,

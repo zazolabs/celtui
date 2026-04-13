@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Test that proper motion correction is being applied correctly
 
 use celtnav::almanac::{get_body_position, CelestialBody};

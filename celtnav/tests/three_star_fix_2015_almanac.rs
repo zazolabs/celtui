@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Three-star fix test using actual 2015 almanac data
 //! Expected fix: 49°33.0'N 019°58.5'W
 //!

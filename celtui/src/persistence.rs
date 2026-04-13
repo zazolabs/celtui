@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Data persistence for saving and loading sight observations
 //!
 //! This module provides functionality to save sight observations to disk

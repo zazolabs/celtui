@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Dead Reckoning (DR) and Estimated Position (EP) screen
 //!
 //! This screen manages DR/EP positions, calculates running fixes,

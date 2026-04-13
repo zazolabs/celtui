@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Tests for fix calculation from lines of position (LOPs)
 //!
 //! These tests verify that the fix calculation correctly accounts for

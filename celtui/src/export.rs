@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Export functionality for sight logs and calculation results
 //!
 //! This module provides functions to export sight observations and fixes

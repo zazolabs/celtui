@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Three-star fix using correct Assumed Positions (AP) for Pub.249 Vol.1
 //!
 //! For Pub.249 Vol.1 star tables:

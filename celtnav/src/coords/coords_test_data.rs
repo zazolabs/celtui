@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Test data from Pub 229 (Sight Reduction Tables for Marine Navigation)
 //!
 //! These are known-correct values from published navigation tables

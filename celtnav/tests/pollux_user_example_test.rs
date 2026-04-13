@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Test based on user's data for Pollux sight
 //! Pollux, 10 Sept 2016, 06:28:12 UTC
 //!

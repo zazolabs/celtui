@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 #![cfg_attr(test, allow(dead_code))]
 
 //! Auto Compute screen for multiple sight reduction and fix calculation

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Integration tests for time conversion functions
 //!
 //! These tests use known astronomical values from published almanac data

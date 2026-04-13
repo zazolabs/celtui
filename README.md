@@ -239,4 +239,4 @@ CelTUI was built to handle the arithmetic so the focus stays on the navigation.
 
 ## Licence
 
-GNU General Public License v2.0 or later — see [LICENSE](LICENSE).
+GNU General Public License v2.0 only — see [LICENSE](LICENSE).

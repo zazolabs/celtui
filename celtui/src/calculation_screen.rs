@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 #![allow(clippy::upper_case_acronyms)]
 //! Sight reduction calculation screen
 //!

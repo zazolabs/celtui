@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Three-star fix using user's exact intercept and azimuth values
 //! This verifies that the fix calculation itself is working correctly
 

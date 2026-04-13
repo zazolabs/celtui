@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Almanac module for celestial navigation
 //!
 //! This module provides accurate calculations for celestial body positions

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Verify that computed azimuths match Pub.249 Vol.1 table values
 //! for the 2015 three-star fix
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Verify that the calculated fix actually lies on all three LOPs
 //! This checks the geometry is correct
 

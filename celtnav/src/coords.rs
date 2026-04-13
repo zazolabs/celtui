@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Coordinate transformation functions for celestial navigation
 //!
 //! This module provides functions for converting between different celestial

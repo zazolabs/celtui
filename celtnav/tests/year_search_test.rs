@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 // Search for which year gives GHA Aries = 86° 03.3' (86.055°)
 // for September 10 at 06:28:18 UTC
 

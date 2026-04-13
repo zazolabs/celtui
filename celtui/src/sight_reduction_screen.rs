@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Sight Reduction Tables screen
 //!
 //! This module provides a screen that emulates the function of sight reduction tables

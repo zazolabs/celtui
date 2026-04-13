@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Three-star fix with CORRECT azimuths (no conversion needed for Pub.249 Vol.1)
 //! Pub.249 Vol.1 gives Z as true azimuth (Zn) directly - DO NOT convert!
 

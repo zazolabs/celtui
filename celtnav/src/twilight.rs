@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Twilight calculations for celestial navigation
 //!
 //! This module provides functions to calculate twilight times and

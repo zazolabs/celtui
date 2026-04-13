@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Test the move_position function to ensure it's working correctly
 
 use celtnav::dms_to_decimal;

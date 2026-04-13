@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Test moon and planet calculations against Nautical Almanac 2024 values
 //!
 //! These tests verify that our moon and planet position calculations

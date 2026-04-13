@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Example demonstrating DMS (Degrees, Decimal Minutes) conversion
 //!
 //! This example shows how to use the DMS conversion functions

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Twilight and celestial visibility screen
 //!
 //! This screen calculates twilight times (morning and evening) and shows

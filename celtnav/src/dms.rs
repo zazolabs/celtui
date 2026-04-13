@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! DMS (Degrees, Decimal Minutes) coordinate conversion
 //!
 //! This module provides functions for converting between decimal degrees

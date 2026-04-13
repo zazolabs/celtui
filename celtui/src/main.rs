@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Celestial Navigation TUI Application
 //!
 //! A terminal user interface for celestial navigation calculations,

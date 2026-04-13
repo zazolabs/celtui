@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Almanac data lookup screen
 //!
 //! This module provides a screen for looking up GHA, Declination, and other

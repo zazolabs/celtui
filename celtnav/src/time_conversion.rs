@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Time conversion functions for celestial navigation
 //!
 //! This module provides functions for converting between different time systems

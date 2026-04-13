@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Integration tests for coordinate transformation functions
 //!
 //! These tests verify the conversion between equatorial (RA/Dec) and

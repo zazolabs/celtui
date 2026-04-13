@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Fix calculation from multiple lines of position (LOPs)
 //!
 //! This module provides functions for calculating a ship's position (fix) from

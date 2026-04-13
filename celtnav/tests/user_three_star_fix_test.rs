@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Test for user's three-star fix: Pollux, Hamal, Deneb
 //! Expected fix: 49°33.0'N 019°58.5'W
 //! Current result: 49°33.x'N 019°25.16'W (longitude is wrong)

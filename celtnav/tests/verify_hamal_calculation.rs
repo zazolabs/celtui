@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Verify Hamal calculation against user's table values
 
 use celtnav::almanac::{get_body_position, CelestialBody, find_star};

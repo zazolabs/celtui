@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Test complete Moon and planet sight reduction workflows
 //!
 //! These tests verify the complete process of reducing a Moon or planet sight,

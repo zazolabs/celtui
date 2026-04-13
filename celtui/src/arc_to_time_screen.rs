@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Arc to Time Calculator screen
 //!
 //! This module provides a screen for converting longitude (arc) to time offset from UTC.

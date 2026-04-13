@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: Alexander Atanasov <alex@zazolabs.com>
 //! Aldebaran 1975 Sight Reduction Validation Test
 //!
 //! Verifies that proper motion and precession corrections produce the correct
