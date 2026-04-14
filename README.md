@@ -46,7 +46,7 @@ Download the latest release for your platform from the [Releases](../../releases
 ### Build from source
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/celtui.git
+git clone https://github.com/zazolabs/celtui.git
 cd celtui
 cargo build --release -p celtui
 ./target/release/celtui
@@ -230,7 +230,7 @@ tag that triggers the CI release workflow.
 
 During my study of Celestial Navigation for the YMO course I found myself making arithmetic
 mistakes and spending more time with PDFs and paper tables than understanding the process itself.
-CelTUI was built to handle the arithmetic so the focus stays on the navigation.
+CelTUI was built to handle the arithmetic and repetitive tasks, so the focus stays on the knowledge building.
 
 ---
 
