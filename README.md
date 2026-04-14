@@ -141,9 +141,6 @@ For star sights: GHA Aries · LHA Aries · Pub. 249 optimised Chosen Position
 <!-- screenshot: automatic fix computation screen -->
 ![Automatic Fix Computation](docs/screenshots/auto_fix.png)
 
-<!-- screenshot: fix results -->
-![Fix Results](docs/screenshots/fix_results.png)
-
 ---
 
 ### 5. Sight Averaging
