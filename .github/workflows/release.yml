@@ -26,7 +26,7 @@ jobs:
             runner: windows-latest
             use_cross: false
           - target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-14
             use_cross: false
           - target: aarch64-apple-darwin
             runner: macos-latest
@@ -103,7 +103,11 @@ jobs:
       - name: Strip binary (Unix)
         if: runner.os != 'Windows'
         run: |
-          strip "target/${{ matrix.target }}/release/${{ steps.binary.outputs.name }}"
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            aarch64-linux-gnu-strip "target/${{ matrix.target }}/release/${{ steps.binary.outputs.name }}"
+          else
+            strip "target/${{ matrix.target }}/release/${{ steps.binary.outputs.name }}"
+          fi
 
       - name: Create archive (Unix)
         if: runner.os != 'Windows'
